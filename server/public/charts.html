@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WABot — Gráficos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0b0f;
+      --surface: rgba(255,255,255,0.035);
+      --border: rgba(255,255,255,0.06);
+      --border-accent: rgba(232,168,50,0.2);
+      --text: #e8e6e1;
+      --text-secondary: #a09d95;
+      --text-muted: #5a574f;
+      --accent: #e8a832;
+      --accent-soft: rgba(232,168,50,0.12);
+      --font-display: 'Bricolage Grotesque', serif;
+      --font-body: 'Outfit', sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 9999;
+    }
+
+    .bg-glow { position: fixed; border-radius: 50%; filter: blur(150px); pointer-events: none; z-index: 0; }
+    .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; background: var(--accent); opacity: 0.06; }
+    .bg-glow--2 { width: 500px; height: 500px; bottom: -150px; left: -150px; background: #4a2d7a; opacity: 0.08; }
+
+    /* --- full-width layout --- */
+    .topbar {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(10,11,15,0.85); backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    }
+
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-muted); text-decoration: none;
+      font-size: 0.78rem; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;
+      transition: color 0.2s; flex-shrink: 0;
+    }
+    .back-link:hover { color: var(--accent); }
+    .back-link svg { width: 16px; height: 16px; }
+
+    .topbar-title {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 1.1rem; letter-spacing: -0.5px; flex-shrink: 0;
+    }
+
+    .topbar-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+
+    .topbar-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+    .ctrl-btn {
+      font-family: var(--font-body); font-size: 0.72rem; font-weight: 500;
+      letter-spacing: 0.3px; padding: 5px 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
+    }
+    .ctrl-btn:hover { border-color: var(--border-accent); color: var(--text); }
+    .ctrl-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); font-weight: 600; }
+
+    .date-controls { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
+    .date-controls label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+    .date-controls input[type="date"] {
+      font-family: var(--font-body); font-size: 0.75rem; padding: 4px 8px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); outline: none;
+      transition: border-color 0.2s; color-scheme: dark;
+    }
+    .date-controls input[type="date"]:focus { border-color: var(--border-accent); }
+
+    /* --- top 5 panel --- */
+    .top5-panel {
+      grid-column: span 3;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px 24px;
+    }
+    .top5-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+    }
+    .top5-title {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary);
+    }
+    .top5-hint {
+      font-size: 0.65rem; color: var(--text-muted); margin-left: auto; font-weight: 400;
+    }
+    .top5-list { display: flex; gap: 12px; }
+
+    .top5-card {
+      flex: 1; position: relative; cursor: pointer;
+      background: rgba(255,255,255,0.02); border: 2px solid transparent;
+      border-radius: 12px; padding: 14px 16px; transition: all 0.25s;
+      overflow: hidden;
+    }
+    .top5-card:hover { background: rgba(255,255,255,0.04); }
+    .top5-card.active { border-color: var(--border-accent); background: rgba(255,255,255,0.04); }
+    .top5-card.dimmed { opacity: 0.3; }
+    .top5-card.dimmed:hover { opacity: 0.6; }
+
+    .top5-rank {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .top5-pos {
+      font-family: var(--font-display); font-weight: 800; font-size: 1.4rem;
+      line-height: 1; min-width: 22px;
+    }
+    .top5-name {
+      font-weight: 600; font-size: 0.88rem; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .top5-count {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 1.1rem; margin-bottom: 6px;
+    }
+    .top5-count small { font-weight: 400; font-size: 0.65rem; color: var(--text-muted); margin-left: 2px; }
+    .top5-bar {
+      height: 4px; border-radius: 2px; background: rgba(255,255,255,0.06); overflow: hidden;
+    }
+    .top5-bar-fill {
+      height: 100%; border-radius: 2px; transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    @media (max-width: 1100px) {
+      .top5-panel { grid-column: span 2; }
+      .top5-list { flex-wrap: wrap; }
+      .top5-card { flex: 1 1 45%; }
+    }
+    @media (max-width: 700px) {
+      .top5-panel { grid-column: span 1; }
+      .top5-list { flex-direction: column; }
+      .top5-card { flex: 1 1 100%; }
+    }
+
+    /* --- dashboard grid --- */
+    .dashboard {
+      position: relative; z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: auto;
+      gap: 16px;
+      padding: 20px 24px 60px;
+    }
+
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 18px; display: flex; flex-direction: column;
+    }
+
+    .chart-card.span-2 { grid-column: span 2; }
+    .chart-card.span-3 { grid-column: span 3; }
+
+    .chart-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+    }
+    .chart-title {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary);
+    }
+    .chart-toggle { display: flex; gap: 3px; }
+    .toggle-btn {
+      font-family: var(--font-body); font-size: 0.65rem; font-weight: 500;
+      padding: 3px 8px; border-radius: 5px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+    }
+    .toggle-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); }
+
+    .chart-wrap { position: relative; flex: 1; min-height: 240px; }
+
+    /* --- stats summary row --- */
+    .summary-row {
+      grid-column: span 3;
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 18px; text-align: center;
+    }
+    .stat-value {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 1.6rem; letter-spacing: -1px; color: var(--text);
+    }
+    .stat-label {
+      font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.5px; font-weight: 500; margin-top: 4px;
+    }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.green { color: #4ade80; }
+    .stat-value.blue { color: #60a5fa; }
+    .stat-value.pink { color: #f472b6; }
+    .stat-value.purple { color: #a78bfa; }
+
+    @media (max-width: 1100px) {
+      .dashboard { grid-template-columns: repeat(2, 1fr); }
+      .chart-card.span-3 { grid-column: span 2; }
+      .summary-row { grid-column: span 2; grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 700px) {
+      .dashboard { grid-template-columns: 1fr; padding: 16px 12px 60px; }
+      .chart-card.span-2, .chart-card.span-3 { grid-column: span 1; }
+      .summary-row { grid-column: span 1; grid-template-columns: repeat(2, 1fr); }
+      .topbar { padding: 12px 16px; }
+      .user-pills { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="topbar">
+    <a class="back-link" id="backLink" href="/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      Ranking
+    </a>
+    <span class="topbar-title" id="title">Gráficos</span>
+    <span class="topbar-divider"></span>
+    <div class="topbar-controls" id="controls">
+      <button class="ctrl-btn active" data-range="7">7d</button>
+      <button class="ctrl-btn" data-range="15">15d</button>
+      <button class="ctrl-btn" data-range="30">30d</button>
+      <div class="date-controls">
+        <label>De</label><input type="date" id="startDate">
+        <label>Até</label><input type="date" id="endDate">
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard">
+    <!-- summary cards -->
+    <div class="summary-row" id="summaryRow"></div>
+
+    <!-- top 5 panel -->
+    <div class="top5-panel">
+      <div class="top5-header">
+        <span class="top5-title">Top 5 mais ativos</span>
+        <span class="top5-hint">Clica para filtrar os gráficos</span>
+      </div>
+      <div class="top5-list" id="userPills"></div>
+    </div>
+
+    <!-- row 1: activity + trend -->
+    <div class="chart-card span-2">
+      <div class="chart-header">
+        <span class="chart-title">Top 5 — Atividade diária</span>
+        <div class="chart-toggle" data-target="activity">
+          <button class="toggle-btn active" data-type="line">Linha</button>
+          <button class="toggle-btn" data-type="bar">Barra</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="chartActivity"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header"><span class="chart-title">Padrão semanal</span></div>
+      <div class="chart-wrap"><canvas id="chartRadar"></canvas></div>
+    </div>
+
+    <!-- row 2: weekday + period + period×weekday -->
+    <div class="chart-card">
+      <div class="chart-header"><span class="chart-title">Por dia da semana</span></div>
+      <div class="chart-wrap"><canvas id="chartWeekday"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header"><span class="chart-title">Manhã vs Noite</span></div>
+      <div class="chart-wrap"><canvas id="chartPeriod"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header"><span class="chart-title">Período × Dia da semana</span></div>
+      <div class="chart-wrap"><canvas id="chartPeriodWeekday"></canvas></div>
+    </div>
+
+    <!-- row 3: trend full width -->
+    <div class="chart-card span-3">
+      <div class="chart-header"><span class="chart-title">Tendência do grupo</span></div>
+      <div class="chart-wrap"><canvas id="chartTrend"></canvas></div>
+    </div>
+  </div>
+
+  <script>
+    const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+    const COLORS = [
+      { line: '#e8a832', bg: 'rgba(232,168,50,0.15)' },
+      { line: '#4ade80', bg: 'rgba(74,222,128,0.15)' },
+      { line: '#60a5fa', bg: 'rgba(96,165,250,0.15)' },
+      { line: '#f472b6', bg: 'rgba(244,114,182,0.15)' },
+      { line: '#a78bfa', bg: 'rgba(167,139,250,0.15)' },
+    ]
+    const MANHA_COLOR = '#f0a030'
+    const NOITE_COLOR = '#7c6cfa'
+
+    const params = new URLSearchParams(location.search)
+    const groupId = params.get('id')
+    if (!groupId) location.href = '/'
+    document.getElementById('backLink').href = `/group.html?id=${groupId}`
+
+    // --- helpers ---
+    function localDate(d) {
+      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
+    }
+    function todayStr() { return localDate(new Date()) }
+    function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localDate(d) }
+    function apiUrl(path) { return `${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}` }
+    function buildDateRange() {
+      const out = [], d = new Date(startDate + 'T12:00:00'), dEnd = new Date(endDate + 'T12:00:00')
+      while (d <= dEnd) { out.push(localDate(d)); d.setDate(d.getDate() + 1) }
+      return out
+    }
+    function dateLabel(date) {
+      const dt = new Date(date + 'T12:00:00')
+      return `${DAYS[dt.getDay()]} ${date.slice(8)}/${date.slice(5,7)}`
+    }
+
+    let startDate = daysAgoStr(6), endDate = todayStr(), activityType = 'line'
+    const FETCH_OPTS = { cache: 'no-cache' }
+
+    const $start = document.getElementById('startDate')
+    const $end = document.getElementById('endDate')
+    $start.value = startDate; $end.value = endDate
+
+    // --- controls ---
+    document.getElementById('controls').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-range]')
+      if (!btn) return
+      startDate = daysAgoStr(parseInt(btn.dataset.range) - 1); endDate = todayStr()
+      $start.value = startDate; $end.value = endDate
+      document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      loadAll()
+    })
+    $start.addEventListener('change', () => { startDate = $start.value; clearActive(); loadAll() })
+    $end.addEventListener('change', () => { endDate = $end.value; clearActive(); loadAll() })
+    function clearActive() { document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active')) }
+
+    document.querySelector('[data-target="activity"]').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-type]')
+      if (!btn) return
+      activityType = btn.dataset.type
+      e.currentTarget.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      renderActivityChart()
+    })
+
+    // --- Chart.js defaults ---
+    Chart.defaults.color = '#a09d95'
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)'
+    Chart.defaults.font.family = "'Outfit', sans-serif"
+
+    const chartInstances = {}
+    function makeChart(id, config) {
+      if (chartInstances[id]) chartInstances[id].destroy()
+      chartInstances[id] = new Chart(document.getElementById(id), config)
+    }
+
+    const sharedTooltip = {
+      backgroundColor: 'rgba(10,11,15,0.95)', borderColor: 'rgba(255,255,255,0.1)',
+      borderWidth: 1, titleFont: { weight: 700 }, bodyFont: { size: 13 },
+      padding: 12, cornerRadius: 10,
+    }
+
+    // --- avg line plugin ---
+    const avgLinePlugin = {
+      id: 'avgLine',
+      afterDraw(chart) {
+        if (!chart.config.options.plugins?.avgLine) return
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart
+        const visible = chart.data.datasets
+          .map((ds, i) => chart.isDatasetVisible(i) ? ds.data : null).filter(Boolean)
+        if (visible.length === 0) return
+        const vals = visible.flat().filter(v => v > 0)
+        if (vals.length === 0) return
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+        const yPos = y.getPixelForValue(avg)
+        if (yPos < top || yPos > bottom) return
+        ctx.save()
+        ctx.setLineDash([6, 4]); ctx.strokeStyle = 'rgba(232,168,50,0.5)'; ctx.lineWidth = 1.5
+        ctx.beginPath(); ctx.moveTo(left, yPos); ctx.lineTo(right, yPos); ctx.stroke()
+        ctx.setLineDash([]); ctx.fillStyle = 'rgba(232,168,50,0.8)'
+        ctx.font = "600 11px 'Outfit', sans-serif"; ctx.textAlign = 'right'
+        ctx.fillText(`média: ${avg.toFixed(1)}`, right - 4, yPos - 6)
+        ctx.restore()
+      }
+    }
+    Chart.register(avgLinePlugin)
+
+    // =====================
+    // USER SELECTION STATE
+    // =====================
+    let allUsers = []       // [{ sender, name, color, total }]
+    let activeUsers = new Set() // senders that are visible
+
+
+    function renderPills() {
+      const container = document.getElementById('userPills')
+      const maxTotal = allUsers[0]?.total || 1
+
+      container.innerHTML = allUsers.map((u, i) => {
+        const isActive = activeUsers.has(u.sender)
+        const allActive = activeUsers.size === allUsers.length
+        const cls = allActive ? 'active' : (isActive ? 'active' : 'dimmed')
+        const pos = i + 1
+        const pct = (u.total / maxTotal * 100).toFixed(0)
+        const posLabel = pos
+
+        return `<div class="top5-card ${cls}" data-sender="${u.sender}">
+          <div class="top5-rank">
+            <span class="top5-pos" style="color:${u.color}">${posLabel}</span>
+            <span class="top5-name">${u.name}</span>
+          </div>
+          <div class="top5-count">${u.total}<small>msg</small></div>
+          <div class="top5-bar">
+            <div class="top5-bar-fill" style="width:${pct}%;background:${u.color}"></div>
+          </div>
+        </div>`
+      }).join('')
+
+      container.onclick = (e) => {
+        const card = e.target.closest('[data-sender]')
+        if (!card) return
+        const sender = card.dataset.sender
+        const allActive = activeUsers.size === allUsers.length
+
+        if (allActive) {
+          activeUsers = new Set([sender])
+        } else if (activeUsers.has(sender) && activeUsers.size === 1) {
+          activeUsers = new Set(allUsers.map(u => u.sender))
+        } else if (activeUsers.has(sender)) {
+          activeUsers.delete(sender)
+        } else {
+          activeUsers.add(sender)
+        }
+        renderPills()
+        syncAllCharts()
+      }
+    }
+
+    function syncAllCharts() {
+      // activity chart
+      const act = chartInstances['chartActivity']
+      if (act) {
+        act.data.datasets.forEach((ds, i) => {
+          if (i < allUsers.length) act.setDatasetVisibility(i, activeUsers.has(allUsers[i].sender))
+        })
+        act.update()
+      }
+      // radar chart
+      const radar = chartInstances['chartRadar']
+      if (radar) {
+        radar.data.datasets.forEach((ds, i) => {
+          if (i < allUsers.length) radar.setDatasetVisibility(i, activeUsers.has(allUsers[i].sender))
+        })
+        radar.update()
+      }
+    }
+
+    // =====================
+    // CACHED DATA
+    // =====================
+    let cachedActivity = null, cachedTrend = null, cachedWeekday = null
+    let cachedPeriod = null, cachedPeriodWeekday = null, cachedRadar = null
+
+    // =====================
+    // SUMMARY CARDS
+    // =====================
+    function renderSummary() {
+      if (!cachedActivity || !cachedPeriod || !cachedWeekday) return
+      const totalMsg = cachedActivity.users.reduce((s, u) => s + u.total, 0)
+      const totalUsers = cachedActivity.users.length
+      const topUser = cachedActivity.users[0]
+      const manha = cachedPeriod.find(r => r.period === 'manha')?.total || 0
+      const noite = cachedPeriod.find(r => r.period === 'noite')?.total || 0
+      const busiestDay = cachedWeekday.reduce((best, r) => r.total > best.total ? r : best, { total: 0, day_of_week: 0 })
+
+      document.getElementById('summaryRow').innerHTML = `
+        <div class="stat-card">
+          <div class="stat-value accent">${totalMsg}</div>
+          <div class="stat-label">Total mensagens</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value green">${topUser ? topUser.name.split(' ')[0] : '-'}</div>
+          <div class="stat-label">Mais ativo (${topUser?.total || 0})</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value blue">${DAYS[busiestDay.day_of_week]}</div>
+          <div class="stat-label">Dia mais ativo (${busiestDay.total})</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:${MANHA_COLOR}">${manha}</div>
+          <div class="stat-label">Manhã (6h-18h)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:${NOITE_COLOR}">${noite}</div>
+          <div class="stat-label">Noite (18h-6h)</div>
+        </div>
+      `
+    }
+
+    // =====================
+    // 1. ACTIVITY (line/bar)
+    // =====================
+    function renderActivityChart() {
+      if (!cachedActivity) return
+      const allDates = buildDateRange()
+      const labels = allDates.map(dateLabel)
+      const datasets = cachedActivity.users.map((user, i) => {
+        const c = COLORS[i % COLORS.length]
+        const dayMap = new Map(user.days.map(d => [d.date, d.total]))
+        const values = allDates.map(date => dayMap.get(date) || 0)
+        return activityType === 'line' ? {
+          label: user.name, data: values,
+          borderColor: c.line, backgroundColor: c.bg,
+          borderWidth: 2.5, pointRadius: 3, pointHoverRadius: 5,
+          pointBackgroundColor: c.line, tension: 0.3, fill: true,
+        } : {
+          label: user.name, data: values,
+          backgroundColor: c.line + 'cc', borderColor: c.line,
+          borderWidth: 1, borderRadius: 4,
+        }
+      })
+      makeChart('chartActivity', {
+        type: activityType, data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            avgLine: true,
+            legend: { display: false },
+            tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => `  ${ctx.dataset.label}: ${ctx.parsed.y} msg` } },
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+          },
+        },
+      })
+      syncAllCharts()
+    }
+
+    // =====================
+    // 2. TREND
+    // =====================
+    function renderTrendChart() {
+      if (!cachedTrend) return
+      const allDates = buildDateRange()
+      const labels = allDates.map(dateLabel)
+      const dayMap = new Map(cachedTrend.map(r => [r.date, r.total]))
+      const values = allDates.map(d => dayMap.get(d) || 0)
+      makeChart('chartTrend', {
+        type: 'line', data: { labels, datasets: [{
+          label: 'Total', data: values,
+          borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.08)',
+          borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#4ade80', tension: 0.3, fill: true,
+        }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { avgLine: true, legend: { display: false }, tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => `  ${ctx.parsed.y} mensagens` } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+          },
+        },
+      })
+    }
+
+    // =====================
+    // 3. WEEKDAY
+    // =====================
+    function renderWeekdayChart() {
+      if (!cachedWeekday) return
+      const values = Array(7).fill(0)
+      cachedWeekday.forEach(r => { values[r.day_of_week] = r.total })
+      const max = Math.max(...values)
+      const colors = values.map(v => {
+        const r = max > 0 ? v / max : 0
+        if (r < 0.25) return '#3d6b4f'
+        if (r < 0.5) return '#8ebb30'
+        if (r < 0.75) return '#e87a20'
+        return '#d43a3a'
+      })
+      makeChart('chartWeekday', {
+        type: 'bar', data: { labels: DAYS, datasets: [{ data: values, backgroundColor: colors, borderRadius: 6, borderSkipped: false }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => `  ${ctx.parsed.y} msg` } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 11, weight: 600 } } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+          },
+        },
+      })
+    }
+
+    // =====================
+    // 4. PERIOD DOUGHNUT
+    // =====================
+    function renderPeriodChart() {
+      if (!cachedPeriod) return
+      const m = cachedPeriod.find(r => r.period === 'manha')?.total || 0
+      const n = cachedPeriod.find(r => r.period === 'noite')?.total || 0
+      const t = m + n
+      makeChart('chartPeriod', {
+        type: 'doughnut',
+        data: { labels: ['Manhã (6h-18h)', 'Noite (18h-6h)'], datasets: [{
+          data: [m, n], backgroundColor: [MANHA_COLOR + 'cc', NOITE_COLOR + 'cc'],
+          borderColor: [MANHA_COLOR, NOITE_COLOR], borderWidth: 2, hoverOffset: 6,
+        }] },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: '62%',
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } } },
+            tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => { const p = t > 0 ? (ctx.parsed/t*100).toFixed(1) : 0; return `  ${ctx.label}: ${ctx.parsed} (${p}%)` } } },
+          },
+        },
+        plugins: [{
+          id: 'center',
+          afterDraw(chart) {
+            const { ctx, chartArea: { left, right, top, bottom } } = chart
+            const cx = (left+right)/2, cy = (top+bottom)/2
+            ctx.save(); ctx.fillStyle = '#e8e6e1'
+            ctx.font = "800 22px 'Bricolage Grotesque',serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+            ctx.fillText(t, cx, cy-6)
+            ctx.fillStyle = '#5a574f'; ctx.font = "500 10px 'Outfit',sans-serif"; ctx.fillText('total', cx, cy+12)
+            ctx.restore()
+          }
+        }],
+      })
+    }
+
+    // =====================
+    // 5. PERIOD × WEEKDAY
+    // =====================
+    function renderPeriodWeekdayChart() {
+      if (!cachedPeriodWeekday) return
+      const manha = Array(7).fill(0), noite = Array(7).fill(0)
+      cachedPeriodWeekday.forEach(r => {
+        if (r.period === 'manha') manha[r.day_of_week] = r.total
+        else noite[r.day_of_week] = r.total
+      })
+      makeChart('chartPeriodWeekday', {
+        type: 'bar', data: { labels: DAYS, datasets: [
+          { label: 'Manhã', data: manha, backgroundColor: MANHA_COLOR+'cc', borderColor: MANHA_COLOR, borderWidth: 1, borderRadius: 4 },
+          { label: 'Noite', data: noite, backgroundColor: NOITE_COLOR+'cc', borderColor: NOITE_COLOR, borderWidth: 1, borderRadius: 4 },
+        ] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { font: { size: 11, weight: 600 } } },
+            y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+          },
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } } },
+            tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => `  ${ctx.dataset.label}: ${ctx.parsed.y} msg` } },
+          },
+        },
+      })
+    }
+
+    // =====================
+    // 6. RADAR
+    // =====================
+    function renderRadarChart() {
+      if (!cachedRadar) return
+      const datasets = cachedRadar.map((user, i) => {
+        const c = COLORS[i % COLORS.length]
+        return {
+          label: user.name, data: user.weekdays,
+          borderColor: c.line, backgroundColor: c.bg,
+          borderWidth: 2, pointRadius: 3, pointBackgroundColor: c.line,
+        }
+      })
+      makeChart('chartRadar', {
+        type: 'radar', data: { labels: DAYS, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { r: {
+            beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)' },
+            angleLines: { color: 'rgba(255,255,255,0.06)' },
+            pointLabels: { font: { size: 11, weight: 600 }, color: '#a09d95' }, ticks: { display: false },
+          } },
+          plugins: {
+            legend: { display: false },
+            tooltip: { ...sharedTooltip, callbacks: { label: (ctx) => `  ${ctx.dataset.label}: ${ctx.parsed.r} msg` } },
+          },
+        },
+      })
+      syncAllCharts()
+    }
+
+    // =====================
+    // LOAD ALL
+    // =====================
+    async function loadAll() {
+      const [rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar] = await Promise.all([
+        fetch(apiUrl('/api/stats/top-users-daily'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/trend'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/by-weekday'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/by-period'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/period-weekday'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/users-weekday'), FETCH_OPTS),
+      ])
+
+      cachedActivity = await rActivity.json()
+      cachedTrend = await rTrend.json()
+      cachedWeekday = await rWeekday.json()
+      cachedPeriod = await rPeriod.json()
+      cachedPeriodWeekday = await rPeriodWd.json()
+      cachedRadar = await rRadar.json()
+
+      document.getElementById('title').textContent = cachedActivity.name
+      document.title = `WABot — ${cachedActivity.name} — Analytics`
+
+      // build user list
+      allUsers = cachedActivity.users.map((u, i) => ({
+        sender: u.sender, name: u.name, total: u.total, color: COLORS[i % COLORS.length].line,
+      }))
+      activeUsers = new Set(allUsers.map(u => u.sender))
+      renderPills()
+
+      renderSummary()
+      renderActivityChart()
+      renderTrendChart()
+      renderWeekdayChart()
+      renderPeriodChart()
+      renderPeriodWeekdayChart()
+      renderRadarChart()
+    }
+
+    loadAll()
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+node_modules
+bot/node_modules
+server/node_modules
+bot/auth_info
+bot/wabot.db
+bot/.env
+.devcontainer
+.git
+*.log

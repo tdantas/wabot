@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS commands (
+  name TEXT PRIMARY KEY,
+  description TEXT NOT NULL
+) WITHOUT ROWID;

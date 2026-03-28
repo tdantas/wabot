@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" font-family="'Segoe UI', sans-serif">
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#25d366"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="500" rx="16" fill="#0b141a"/>
+
+  <!-- Title -->
+  <text x="400" y="42" text-anchor="middle" fill="#25d366" font-size="22" font-weight="bold">Como usar o comando AI</text>
+  <text x="400" y="65" text-anchor="middle" fill="#8696a0" font-size="13">Faz perguntas e recebe respostas inteligentes</text>
+
+  <!-- STEP 1 (centrado: x=133) -->
+  <!-- Phone frame -->
+  <rect x="133" y="90" width="200" height="340" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="143" y="110" width="180" height="300" rx="4" fill="#0b141a"/>
+
+  <!-- Step label -->
+  <circle cx="233" cy="450" r="14" fill="#25d366"/>
+  <text x="233" y="455" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">1</text>
+  <text x="233" y="478" text-anchor="middle" fill="#e9edef" font-size="11">Escreve o comando</text>
+
+  <!-- Chat header -->
+  <rect x="143" y="110" width="180" height="30" rx="4" fill="#1f2c34"/>
+  <text x="158" y="130" fill="#e9edef" font-size="11" font-weight="bold">Grupo TNB</text>
+
+  <!-- User message bubble -->
+  <rect x="163" y="155" width="150" height="45" rx="8" fill="#005c4b"/>
+  <text x="173" y="172" fill="#e9edef" font-size="10" font-weight="bold">Tu</text>
+  <text x="173" y="189" fill="#e9edef" font-size="11">/bot ai o que eh LLM?</text>
+
+  <!-- Arrow 1->2 -->
+  <path d="M 345 260 L 455 260" stroke="#25d366" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+
+  <!-- STEP 2 (centrado: x=467) -->
+  <!-- Phone frame -->
+  <rect x="467" y="90" width="200" height="340" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="477" y="110" width="180" height="300" rx="4" fill="#0b141a"/>
+
+  <!-- Step label -->
+  <circle cx="567" cy="450" r="14" fill="#25d366"/>
+  <text x="567" y="455" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">2</text>
+  <text x="567" y="478" text-anchor="middle" fill="#e9edef" font-size="11">Recebe a resposta</text>
+
+  <!-- Chat header -->
+  <rect x="477" y="110" width="180" height="30" rx="4" fill="#1f2c34"/>
+  <text x="492" y="130" fill="#e9edef" font-size="11" font-weight="bold">Grupo TNB</text>
+
+  <!-- User message -->
+  <rect x="497" y="155" width="150" height="45" rx="8" fill="#005c4b"/>
+  <text x="507" y="172" fill="#e9edef" font-size="10" font-weight="bold">Tu</text>
+  <text x="507" y="189" fill="#e9edef" font-size="11">/bot ai o que eh LLM?</text>
+
+  <!-- Bot reply (as quote reply) -->
+  <rect x="482" y="215" width="168" height="130" rx="8" fill="#1f2c34"/>
+  <rect x="486" y="219" width="3" height="20" rx="1.5" fill="#25d366"/>
+  <text x="495" y="232" fill="#8696a0" font-size="8">Em resposta a: Tu</text>
+  <rect x="486" y="244" width="160" height="1" fill="#2a3942"/>
+  <text x="492" y="260" fill="#25d366" font-size="10" font-weight="bold">Bot</text>
+  <text x="492" y="278" fill="#e9edef" font-size="10">LLM (Large Language</text>
+  <text x="492" y="292" fill="#e9edef" font-size="10">Model) eh um modelo de</text>
+  <text x="492" y="306" fill="#e9edef" font-size="10">inteligencia artificial</text>
+  <text x="492" y="320" fill="#e9edef" font-size="10">treinado com grandes</text>
+  <text x="492" y="334" fill="#e9edef" font-size="10">volumes de texto...</text>
+
+</svg>

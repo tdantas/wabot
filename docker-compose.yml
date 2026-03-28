@@ -1,0 +1,31 @@
+services:
+  bot:
+    build: .
+    command: node bot/wa.js
+    working_dir: /app/bot
+    env_file: bot/.env
+    environment:
+      - TZ=${TZ:-Europe/Lisbon}
+    volumes:
+      - ./bot/auth_info:/app/bot/auth_info
+      - ./bot/wabot.db:/app/bot/wabot.db
+      - ./bot/config.json:/app/bot/config.json
+      - ./bot/prompts:/app/bot/prompts
+    restart: unless-stopped
+
+  server:
+    build: .
+    command: node server/server.js
+    working_dir: /app/server
+    environment:
+      - TZ=${TZ:-Europe/Lisbon}
+      - PORT=3000
+      - DB_PATH=/app/bot/wabot.db
+    volumes:
+      - ./bot/wabot.db:/app/bot/wabot.db:ro
+      - ./bot/config.json:/app/bot/config.json:ro
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+    depends_on:
+      - bot

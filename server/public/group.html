@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WABot — Ranking</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0b0f;
+      --surface: rgba(255,255,255,0.035);
+      --surface-raised: rgba(255,255,255,0.055);
+      --border: rgba(255,255,255,0.06);
+      --border-accent: rgba(232,168,50,0.2);
+      --text: #e8e6e1;
+      --text-secondary: #a09d95;
+      --text-muted: #5a574f;
+      --accent: #e8a832;
+      --accent-soft: rgba(232,168,50,0.12);
+      --gold: #e8a832;
+      --silver: #a8a4b8;
+      --bronze: #c47d3e;
+      --heat-1: #3d6b4f;
+      --heat-2: #5a9e3e;
+      --heat-3: #8ebb30;
+      --heat-4: #daa520;
+      --heat-5: #e87a20;
+      --heat-6: #e84e2a;
+      --heat-7: #d43a3a;
+      --heat-8: #a01c1c;
+      --font-display: 'Bricolage Grotesque', serif;
+      --font-body: 'Outfit', sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    .bg-glow {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(150px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .bg-glow--1 {
+      width: 500px; height: 500px;
+      top: -150px; right: -80px;
+      background: var(--accent);
+      opacity: 0.08;
+    }
+    .bg-glow--2 {
+      width: 400px; height: 400px;
+      bottom: -100px; left: -120px;
+      background: #4a2d7a;
+      opacity: 0.1;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+
+    /* --- nav --- */
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      opacity: 0;
+      animation: fadeUp 0.5s ease forwards;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .back-link:hover { color: var(--accent); }
+    .back-link svg { width: 16px; height: 16px; }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: #4ade80;
+      border-radius: 50%;
+      animation: livePulse 2s ease infinite;
+    }
+
+    @keyframes livePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+    }
+
+    /* --- page header --- */
+    .page-header {
+      margin-bottom: 36px;
+      opacity: 0;
+      animation: fadeUp 0.5s ease 0.1s forwards;
+    }
+
+    .group-name {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(1.8rem, 5vw, 2.4rem);
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+
+    .updated-time {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    /* --- filters --- */
+    .filters {
+      margin-bottom: 24px;
+      opacity: 0;
+      animation: fadeUp 0.5s ease 0.12s forwards;
+    }
+
+    .filter-presets {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      font-family: var(--font-body);
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--border-accent);
+      color: var(--text);
+    }
+
+    .filter-btn.active {
+      background: var(--accent-soft);
+      border-color: var(--border-accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .filter-dates {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      animation: fadeUp 0.3s ease;
+    }
+
+    .filter-dates.visible {
+      display: flex;
+    }
+
+    .filter-dates label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 500;
+    }
+
+    .filter-dates input[type="date"] {
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+      color-scheme: dark;
+    }
+
+    .filter-dates input[type="date"]:focus {
+      border-color: var(--border-accent);
+    }
+
+    /* --- section --- */
+    .section {
+      margin-bottom: 32px;
+    }
+
+    body:not(.loaded) .section {
+      opacity: 0;
+      animation: fadeUp 0.5s ease 0.2s forwards;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-label {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .section-badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    .section-expand {
+      margin-left: auto;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    .section-expand:hover { color: var(--accent); }
+
+    /* --- rank items --- */
+    .rank-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .rank-item {
+      display: grid;
+      grid-template-columns: 38px 1fr auto;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: transparent;
+      transition: background 0.2s;
+      position: relative;
+    }
+
+    .rank-item:nth-child(odd) {
+      background: var(--surface);
+    }
+
+    .rank-item:hover {
+      background: var(--surface-raised);
+    }
+
+    /* --- podium top 3 --- */
+    .rank-item[data-pos="1"] {
+      background: linear-gradient(135deg, rgba(232,168,50,0.08), transparent 70%);
+      border: 1px solid rgba(232,168,50,0.1);
+    }
+    .rank-item[data-pos="1"]:hover {
+      background: linear-gradient(135deg, rgba(232,168,50,0.12), transparent 70%);
+    }
+
+    .rank-pos {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .rank-item[data-pos="1"] .rank-pos { color: var(--gold); font-size: 1.15rem; }
+    .rank-item[data-pos="2"] .rank-pos { color: var(--silver); }
+    .rank-item[data-pos="3"] .rank-pos { color: var(--bronze); }
+
+    .rank-main {
+      min-width: 0;
+    }
+
+    .rank-name {
+      font-weight: 500;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rank-item.clickable {
+      cursor: pointer;
+    }
+    .rank-item.clickable:hover .rank-name {
+      color: var(--accent);
+    }
+
+    .rank-bar-track {
+      height: 3px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+
+    .rank-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, var(--accent), #d4922a);
+      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .rank-item[data-pos="2"] .rank-bar-fill {
+      background: linear-gradient(90deg, var(--silver), #8b87a0);
+    }
+    .rank-item[data-pos="3"] .rank-bar-fill {
+      background: linear-gradient(90deg, var(--bronze), #a06830);
+    }
+    .rank-item:not([data-pos="1"]):not([data-pos="2"]):not([data-pos="3"]) .rank-bar-fill {
+      background: rgba(255,255,255,0.12);
+    }
+
+    .rank-count {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--text);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .rank-count small {
+      font-weight: 400;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-left: 2px;
+    }
+
+    .rank-item[data-pos="1"] .rank-count { color: var(--gold); }
+
+    /* --- drilldown --- */
+    .drilldown {
+      margin: 8px 0 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      overflow: hidden;
+    }
+
+    .drilldown.is-new {
+      animation: slideDown 0.3s ease;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; max-height: 0; padding: 0 18px; }
+      to { opacity: 1; max-height: 600px; }
+    }
+
+    .drilldown-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .drilldown-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.78rem;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .drilldown-close {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.05);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+      border: none;
+      font-family: inherit;
+    }
+    .drilldown-close:hover {
+      background: rgba(255,255,255,0.1);
+      color: var(--text);
+    }
+
+    .drilldown-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .drill-row {
+      display: grid;
+      grid-template-columns: 72px 1fr 44px;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+    }
+
+    .drill-day {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+
+    .drill-bar-track {
+      height: 22px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+    }
+
+    .drill-bar-fill {
+      height: 100%;
+      transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      min-width: 0;
+    }
+
+    .drill-bar-fill.manha {
+      border-radius: 6px 0 0 6px;
+      border-right: 2px solid rgba(0,0,0,0.8);
+    }
+
+    .drill-bar-fill.noite {
+      border-radius: 0 6px 6px 0;
+      opacity: 0.55;
+    }
+
+    .drill-bar-fill.manha:only-child {
+      border-radius: 6px;
+      border-right: none;
+    }
+    .drill-bar-fill.noite:first-child {
+      border-radius: 6px;
+    }
+
+    .drill-count {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--text);
+      text-align: right;
+    }
+
+    /* --- period legend --- */
+    .drilldown-legend {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+    }
+
+    .legend-dot.manha { background: var(--heat-4); }
+    .legend-dot.noite { background: var(--heat-4); opacity: 0.55; }
+
+    /* --- empty --- */
+    .empty {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      padding: 16px 0;
+      text-align: center;
+    }
+
+    /* --- loading --- */
+    .loading {
+      display: flex;
+      justify-content: center;
+      padding: 60px 0;
+    }
+    .loading-dot {
+      width: 8px; height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      margin: 0 4px;
+      animation: pulse 1.2s ease infinite;
+    }
+    .loading-dot:nth-child(2) { animation-delay: 0.15s; }
+    .loading-dot:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes pulse {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* --- responsive --- */
+    @media (max-width: 480px) {
+      .container { padding: 24px 16px 60px; }
+      .rank-item { padding: 10px 12px; grid-template-columns: 32px 1fr auto; }
+      .drill-row { grid-template-columns: 64px 1fr 38px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="container">
+    <nav class="nav">
+      <a class="back-link" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+        Grupos
+      </a>
+      <div style="display:flex;align-items:center;gap:14px">
+        <a class="back-link" id="chartsLink" style="color:var(--accent)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          Gráficos
+        </a>
+        <div class="live-badge">
+          <span class="live-dot"></span>
+          Live
+        </div>
+      </div>
+    </nav>
+
+    <div class="page-header">
+      <h1 class="group-name" id="title">Ranking</h1>
+      <div class="updated-time" id="updated"></div>
+    </div>
+
+    <div class="filters">
+      <div class="filter-presets" id="presets"></div>
+      <div class="filter-dates">
+        <label>De</label>
+        <input type="date" id="startDate">
+        <label>Até</label>
+        <input type="date" id="endDate">
+      </div>
+    </div>
+
+    <div id="card">
+      <div class="loading">
+        <div class="loading-dot"></div>
+        <div class="loading-dot"></div>
+        <div class="loading-dot"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+
+    function heatColor(total) {
+      if (total < 10) return 'var(--heat-1)'
+      if (total < 30) return 'var(--heat-2)'
+      if (total < 55) return 'var(--heat-3)'
+      if (total < 80) return 'var(--heat-4)'
+      if (total < 105) return 'var(--heat-5)'
+      if (total < 130) return 'var(--heat-6)'
+      if (total < 150) return 'var(--heat-7)'
+      return 'var(--heat-8)'
+    }
+
+    const params = new URLSearchParams(location.search)
+    const groupId = params.get('id')
+    if (!groupId) location.href = '/'
+    document.getElementById('chartsLink').href = `/charts.html?id=${groupId}`
+
+    // --- date helpers ---
+    function localDate(d) {
+      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
+    }
+    function todayStr() { return localDate(new Date()) }
+    function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localDate(d) }
+    function weekSundayStr() {
+      const d = new Date()
+      d.setDate(d.getDate() - d.getDay())
+      return localDate(d)
+    }
+
+    // --- presets ---
+    const PRESETS = [
+      { label: 'Hoje', start: () => todayStr(), end: () => todayStr() },
+      { label: '7 dias', start: () => daysAgoStr(6), end: () => todayStr() },
+      { label: '15 dias', start: () => daysAgoStr(14), end: () => todayStr() },
+      { label: '30 dias', start: () => daysAgoStr(29), end: () => todayStr() },
+    ]
+
+    let activePreset = 'Hoje'
+    let customMode = false
+    let startDate = todayStr()
+    let endDate = todayStr()
+
+    const $start = document.getElementById('startDate')
+    const $end = document.getElementById('endDate')
+    const $dates = document.querySelector('.filter-dates')
+
+    function initFilters() {
+      const container = document.getElementById('presets')
+      container.innerHTML = PRESETS.map(p =>
+        `<button class="filter-btn${p.label === activePreset ? ' active' : ''}" data-preset="${p.label}">${p.label}</button>`
+      ).join('') + `<button class="filter-btn" data-preset="custom">Custom</button>`
+
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-preset]')
+        if (!btn) return
+        if (btn.dataset.preset === 'custom') {
+          toggleCustom()
+        } else {
+          selectPreset(btn.dataset.preset)
+        }
+      })
+
+      $start.value = startDate
+      $end.value = endDate
+      $start.addEventListener('change', onDateChange)
+      $end.addEventListener('change', onDateChange)
+    }
+
+    function selectPreset(label) {
+      const p = PRESETS.find(x => x.label === label)
+      if (!p) return
+      activePreset = label
+      customMode = false
+      startDate = p.start()
+      endDate = p.end()
+      $start.value = startDate
+      $end.value = endDate
+      $dates.classList.remove('visible')
+      openDrilldowns.group = null
+      openDrilldowns.users.clear()
+      updatePresetButtons()
+      fetchStats()
+    }
+
+    function toggleCustom() {
+      customMode = !customMode
+      activePreset = customMode ? 'custom' : 'Hoje'
+      if (!customMode) {
+        selectPreset('Hoje')
+        return
+      }
+      $dates.classList.add('visible')
+      updatePresetButtons()
+    }
+
+    function onDateChange() {
+      startDate = $start.value
+      endDate = $end.value
+      activePreset = 'custom'
+      customMode = true
+      openDrilldowns.group = null
+      openDrilldowns.users.clear()
+      updatePresetButtons()
+      fetchStats()
+    }
+
+    function updatePresetButtons() {
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === activePreset)
+      })
+    }
+
+    // --- drilldown state ---
+    const openDrilldowns = {
+      group: null,
+      users: new Map()
+    }
+
+    // --- data fetching ---
+    function apiUrl(path, extra = '') {
+      return `${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
+    }
+
+    const FETCH_OPTS = { cache: 'no-cache' }
+
+    async function fetchStats() {
+      const fetches = [fetch(apiUrl('/api/stats'), FETCH_OPTS)]
+
+      // refresh open drilldowns in parallel
+      if (openDrilldowns.group) {
+        fetches.push(fetch(apiUrl('/api/stats/daily'), FETCH_OPTS))
+      }
+      const userEntries = [...openDrilldowns.users.entries()]
+      for (const [sender] of userEntries) {
+        fetches.push(fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS))
+      }
+
+      const responses = await Promise.all(fetches)
+      const data = await responses[0].json()
+
+      let idx = 1
+      if (openDrilldowns.group) {
+        openDrilldowns.group.rows = await responses[idx++].json()
+      }
+      for (const [sender, dd] of userEntries) {
+        dd.rows = await responses[idx++].json()
+      }
+
+      document.getElementById('title').textContent = data.name
+      document.title = `WABot — ${data.name}`
+      render(data)
+      document.getElementById('updated').textContent =
+        'Atualizado às ' + new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    }
+
+    async function loadGroupDrilldown() {
+      if (openDrilldowns.group) { openDrilldowns.group = null; fetchStats(); return }
+      const res = await fetch(apiUrl('/api/stats/daily'), FETCH_OPTS)
+      const rows = await res.json()
+      openDrilldowns.group = { rows, title: 'Mensagens por dia', isNew: true }
+      fetchStats()
+    }
+
+    async function loadUserDrilldown(sender, name) {
+      if (openDrilldowns.users.has(sender)) { openDrilldowns.users.delete(sender); fetchStats(); return }
+      const res = await fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
+      const rows = await res.json()
+      openDrilldowns.users.set(sender, { rows, title: `${name} — por dia`, isNew: true })
+      fetchStats()
+    }
+
+    function closeDrilldown(key) {
+      if (key === 'group') openDrilldowns.group = null
+      else openDrilldowns.users.delete(key)
+      fetchStats()
+    }
+
+    // --- rendering ---
+    function groupByDate(rows) {
+      const map = new Map()
+      for (const r of rows) {
+        if (!map.has(r.date)) {
+          map.set(r.date, { date: r.date, day_of_week: r.day_of_week, manha: 0, noite: 0, total: 0 })
+        }
+        const entry = map.get(r.date)
+        if (r.period === 'manha') entry.manha += r.total
+        else entry.noite += r.total
+        entry.total = entry.manha + entry.noite
+      }
+      return Array.from(map.values())
+    }
+
+    function renderDrilldown(rows, title, closeKey, isNew) {
+      const closeAttr = `onclick="event.stopPropagation(); closeDrilldown('${closeKey}')"`
+      const animClass = isNew ? ' is-new' : ''
+      if (!rows || rows.length === 0) {
+        return `
+          <div class="drilldown${animClass}">
+            <div class="drilldown-header">
+              <span class="drilldown-title">${title}</span>
+              <button class="drilldown-close" ${closeAttr}>&times;</button>
+            </div>
+            <div class="empty">Sem dados</div>
+          </div>`
+      }
+      const days = groupByDate(rows)
+      const max = Math.max(...days.map(d => d.total))
+      return `
+        <div class="drilldown${animClass}">
+          <div class="drilldown-header">
+            <span class="drilldown-title">${title}</span>
+            <button class="drilldown-close" ${closeAttr}>&times;</button>
+          </div>
+          <div class="drilldown-legend">
+            <span class="legend-item"><span class="legend-dot manha"></span>Manhã (6h-18h)</span>
+            <span class="legend-item"><span class="legend-dot noite"></span>Noite (18h-6h)</span>
+          </div>
+          <div class="drilldown-rows">
+            ${days.map(d => {
+              const pctM = (d.manha / max * 100).toFixed(1)
+              const pctN = (d.noite / max * 100).toFixed(1)
+              const color = heatColor(d.total)
+              const dayLabel = `${DAYS[d.day_of_week]} ${d.date.slice(8)}/${d.date.slice(5,7)}`
+              return `
+                <div class="drill-row">
+                  <span class="drill-day">${dayLabel}</span>
+                  <span class="drill-bar-track">
+                    ${d.manha > 0 ? `<div class="drill-bar-fill manha" style="width:${pctM}%;background:${color}" title="Manhã: ${d.manha}"></div>` : ''}
+                    ${d.noite > 0 ? `<div class="drill-bar-fill noite" style="width:${pctN}%;background:${color}" title="Noite: ${d.noite}"></div>` : ''}
+                  </span>
+                  <span class="drill-count">${d.total}</span>
+                </div>`
+            }).join('')}
+          </div>
+        </div>`
+    }
+
+    function renderRanking(items, maxCount) {
+      if (items.length === 0) {
+        return '<div class="empty">Sem dados suficientes</div>'
+      }
+
+      let pos = 1
+      const ranked = items.map((item, i) => {
+        if (i > 0 && item.count < items[i - 1].count) pos = i + 1
+        return { ...item, pos }
+      })
+
+      return `<div class="rank-list">${ranked.map(item => {
+        const clickAttr = item.sender
+          ? ` onclick="loadUserDrilldown('${item.sender}', '${item.name.replace(/'/g, "\\'")}')"` : ''
+        let userDrilldown = ''
+        if (item.sender && openDrilldowns.users.has(item.sender)) {
+          const dd = openDrilldowns.users.get(item.sender)
+          userDrilldown = renderDrilldown(dd.rows, dd.title, item.sender, dd.isNew)
+          dd.isNew = false
+        }
+        const barPct = (item.count / maxCount * 100).toFixed(0)
+        const posAttr = item.pos <= 3 ? ` data-pos="${item.pos}"` : ''
+
+        return `
+          <div class="rank-item clickable"${posAttr}${clickAttr}>
+            <span class="rank-pos">${item.pos}</span>
+            <div class="rank-main">
+              <span class="rank-name">${item.name}</span>
+              <div class="rank-bar-track">
+                <div class="rank-bar-fill" style="width:${barPct}%"></div>
+              </div>
+            </div>
+            <span class="rank-count">${item.count}<small>msg</small></span>
+          </div>
+          ${userDrilldown}`
+      }).join('')}</div>`
+    }
+
+    function render(data) {
+      const card = document.getElementById('card')
+      const maxCount = data.rows[0]?.count || 1
+      const total = data.rows.reduce((s, r) => s + r.count, 0)
+
+      const groupDrilldownHtml = openDrilldowns.group
+        ? renderDrilldown(openDrilldowns.group.rows, openDrilldowns.group.title, 'group', openDrilldowns.group.isNew)
+        : ''
+      if (openDrilldowns.group) openDrilldowns.group.isNew = false
+
+      const showDailyLink = startDate !== endDate
+
+      card.innerHTML = `
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">Ranking</span>
+            ${total > 0 ? `<span class="section-badge">${total} total</span>` : ''}
+            ${showDailyLink ? `<span class="section-expand" onclick="loadGroupDrilldown()">${openDrilldowns.group ? 'Fechar' : 'Ver por dia'} &#9656;</span>` : ''}
+          </div>
+          ${groupDrilldownHtml}
+          ${renderRanking(data.rows, maxCount)}
+        </div>
+      `
+    }
+
+    initFilters()
+    fetchStats().then(() => {
+      requestAnimationFrame(() => document.body.classList.add('loaded'))
+    })
+    setInterval(fetchStats, 5000)
+  </script>
+</body>
+</html>

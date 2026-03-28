@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" font-family="'Segoe UI', sans-serif">
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#25d366"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="520" rx="16" fill="#0b141a"/>
+
+  <!-- Title -->
+  <text x="450" y="42" text-anchor="middle" fill="#25d366" font-size="22" font-weight="bold">Como usar o comando Food</text>
+  <text x="450" y="65" text-anchor="middle" fill="#8696a0" font-size="13">Encontra restaurantes perto de ti com Google Maps</text>
+
+  <!-- ===== STEP 1 ===== -->
+  <rect x="20" y="85" width="190" height="350" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="30" y="105" width="170" height="310" rx="4" fill="#0b141a"/>
+
+  <circle cx="115" cy="455" r="14" fill="#25d366"/>
+  <text x="115" y="460" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">1</text>
+  <text x="115" y="483" text-anchor="middle" fill="#e9edef" font-size="11">Escolhe o tipo</text>
+  <text x="115" y="498" text-anchor="middle" fill="#8696a0" font-size="9">de restaurante</text>
+
+  <!-- Chat header -->
+  <rect x="30" y="105" width="170" height="28" rx="4" fill="#1f2c34"/>
+  <text x="45" y="123" fill="#e9edef" font-size="10" font-weight="bold">Grupo TNB</text>
+
+  <!-- User message -->
+  <rect x="50" y="148" width="145" height="45" rx="8" fill="#005c4b"/>
+  <text x="58" y="164" fill="#e9edef" font-size="9" font-weight="bold">Cara de Bolacha</text>
+  <text x="58" y="182" fill="#e9edef" font-size="11">!bot food marisqueira</text>
+
+  <!-- Arrow 1->2 -->
+  <path d="M 220 240 L 245 240" stroke="#25d366" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ===== STEP 2 ===== -->
+  <rect x="255" y="85" width="190" height="350" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="265" y="105" width="170" height="310" rx="4" fill="#0b141a"/>
+
+  <circle cx="350" cy="455" r="14" fill="#25d366"/>
+  <text x="350" y="460" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">2</text>
+  <text x="350" y="483" text-anchor="middle" fill="#e9edef" font-size="11">Bot pede localizacao</text>
+
+  <!-- Chat header -->
+  <rect x="265" y="105" width="170" height="28" rx="4" fill="#1f2c34"/>
+  <text x="280" y="123" fill="#e9edef" font-size="10" font-weight="bold">Grupo TNB</text>
+
+  <!-- User message -->
+  <rect x="285" y="148" width="145" height="45" rx="8" fill="#005c4b"/>
+  <text x="293" y="164" fill="#e9edef" font-size="9" font-weight="bold">Cara de Bolacha</text>
+  <text x="293" y="182" fill="#e9edef" font-size="11">!bot food marisqueira</text>
+
+  <!-- Bot reply -->
+  <rect x="270" y="208" width="160" height="75" rx="8" fill="#1f2c34"/>
+  <rect x="274" y="212" width="3" height="16" rx="1.5" fill="#25d366"/>
+  <text x="283" y="224" fill="#8696a0" font-size="8">Em resposta a: Cara de Bolacha</text>
+  <rect x="274" y="232" width="152" height="1" fill="#2a3942"/>
+  <text x="278" y="248" fill="#25d366" font-size="9" font-weight="bold">Bot</text>
+  <text x="278" y="263" fill="#e9edef" font-size="9">Envia a tua localizacao</text>
+  <text x="278" y="276" fill="#e9edef" font-size="9">respondendo esta msg</text>
+
+  <!-- Instruction callout -->
+  <rect x="270" y="300" width="160" height="50" rx="8" fill="rgba(255,193,7,0.1)" stroke="#ffc107" stroke-width="1"/>
+  <text x="280" y="318" fill="#ffc107" font-size="9" font-weight="bold">Importante:</text>
+  <text x="280" y="333" fill="#ffc107" font-size="9">Faz REPLY a esta msg</text>
+  <text x="280" y="345" fill="#ffc107" font-size="9">com a tua localizacao</text>
+
+  <!-- Arrow 2->3 -->
+  <path d="M 455 240 L 480 240" stroke="#25d366" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ===== STEP 3 ===== -->
+  <rect x="490" y="85" width="190" height="350" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="500" y="105" width="170" height="310" rx="4" fill="#0b141a"/>
+
+  <circle cx="585" cy="455" r="14" fill="#25d366"/>
+  <text x="585" y="460" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">3</text>
+  <text x="585" y="483" text-anchor="middle" fill="#e9edef" font-size="11">Envia localizacao</text>
+  <text x="585" y="498" text-anchor="middle" fill="#8696a0" font-size="9">como reply</text>
+
+  <!-- Chat header -->
+  <rect x="500" y="105" width="170" height="28" rx="4" fill="#1f2c34"/>
+  <text x="515" y="123" fill="#e9edef" font-size="10" font-weight="bold">Grupo TNB</text>
+
+  <!-- Bot msg being replied to (small) -->
+  <rect x="505" y="148" width="160" height="35" rx="8" fill="#1f2c34" opacity="0.6"/>
+  <text x="515" y="163" fill="#8696a0" font-size="8">Bot: Envia a tua loc...</text>
+  <text x="515" y="176" fill="#8696a0" font-size="8">respondendo esta msg</text>
+
+  <!-- Location pin message -->
+  <rect x="520" y="195" width="140" height="80" rx="8" fill="#005c4b"/>
+  <text x="530" y="212" fill="#e9edef" font-size="9" font-weight="bold">Cara de Bolacha (reply)</text>
+  <!-- Map placeholder -->
+  <rect x="530" y="220" width="120" height="45" rx="4" fill="#2a3942"/>
+  <circle cx="590" cy="240" r="8" fill="#e74c3c"/>
+  <circle cx="590" cy="240" r="3" fill="white"/>
+  <text x="590" y="260" text-anchor="middle" fill="#8696a0" font-size="8">Minha localizacao</text>
+
+  <!-- Arrow 3->4 -->
+  <path d="M 690 240 L 715 240" stroke="#25d366" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ===== STEP 4 ===== -->
+  <rect x="725" y="85" width="160" height="350" rx="20" fill="#1a2730" stroke="#2a3942" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="735" y="105" width="140" height="310" rx="4" fill="#0b141a"/>
+
+  <circle cx="805" cy="455" r="14" fill="#25d366"/>
+  <text x="805" y="460" text-anchor="middle" fill="#0b141a" font-size="14" font-weight="bold">4</text>
+  <text x="805" y="483" text-anchor="middle" fill="#e9edef" font-size="11">Resultados!</text>
+
+  <!-- Chat header -->
+  <rect x="735" y="105" width="140" height="28" rx="4" fill="#1f2c34"/>
+  <text x="750" y="123" fill="#e9edef" font-size="10" font-weight="bold">Grupo TNB</text>
+
+  <!-- Bot result reply -->
+  <rect x="740" y="148" width="130" height="240" rx="8" fill="#1f2c34"/>
+  <rect x="744" y="152" width="3" height="16" rx="1.5" fill="#25d366"/>
+  <text x="753" y="163" fill="#8696a0" font-size="7">Em resposta a: Cara de Bolacha</text>
+  <rect x="744" y="170" width="122" height="1" fill="#2a3942"/>
+  <text x="748" y="186" fill="#25d366" font-size="9" font-weight="bold">Bot</text>
+
+  <!-- Restaurant 1 -->
+  <text x="748" y="204" fill="#e9edef" font-size="8" font-weight="bold">Rota dos Petiscos</text>
+  <text x="748" y="216" fill="#8696a0" font-size="7">772m - 4.8 estrelas</text>
+
+  <!-- Restaurant 2 -->
+  <text x="748" y="236" fill="#e9edef" font-size="8" font-weight="bold">O Rolhas</text>
+  <text x="748" y="248" fill="#8696a0" font-size="7">1.4km - 4.7 estrelas</text>
+
+  <!-- Restaurant 3 -->
+  <text x="748" y="268" fill="#e9edef" font-size="8" font-weight="bold">Recanto Serrano</text>
+  <text x="748" y="280" fill="#8696a0" font-size="7">834m - 4.7 estrelas</text>
+
+  <!-- Restaurant 4 -->
+  <text x="748" y="300" fill="#e9edef" font-size="8" font-weight="bold">Cantinho das Manas</text>
+  <text x="748" y="312" fill="#8696a0" font-size="7">858m - 4.6 estrelas</text>
+
+  <!-- Restaurant 5 -->
+  <text x="748" y="332" fill="#e9edef" font-size="8" font-weight="bold">Sossego</text>
+  <text x="748" y="344" fill="#8696a0" font-size="7">893m - 4.6 estrelas</text>
+
+  <!-- Google Maps badge -->
+  <text x="748" y="374" fill="#4285f4" font-size="7">Powered by Google Maps</text>
+</svg>

@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# auth & session
+auth_info/
+
+# database
+*.db
+*.db-wal
+*.db-shm
+
+# legacy data files
+contacts.json
+stats.json
+
+# environment
+.env
+.env.*
+
+# logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
