@@ -15,7 +15,6 @@ stats.json
 
 # environment
 .env
-.env.*
 
 # logs
 *.log
