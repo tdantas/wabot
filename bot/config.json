@@ -1,17 +1,5 @@
 {
-  "groups":  ["120363148177871914@g.us", 
-              "120363023095126540@g.us", 
-              "13474290319-1551477731@g.us", 
-              "120363203155071855@g.us", 
-              "120363406415362285@g.us",
-              "120363425958478322@g.us"],
-  "groupDisabledCommands": {
-    "120363148177871914@g.us": ["news", "food"]
-  },
-  "trollMode": ["120363406415362285@g.us"],
-
-  "disabledCommands": ["stats", "profile"],
-  "botAliases": ["bot", "jarvis", "alexa", "bot", "chef", "boss"],
+  "botAliases": ["bot", "jarvis", "alexa", "chef", "boss"],
   "rateLimit": {
     "userMaxPerMinute": 3,
     "groupMaxPerMinute": 15

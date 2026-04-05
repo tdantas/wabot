@@ -1,0 +1,27 @@
+services:
+  bot:
+    image: wabot-bot:latest
+    env_file: {{ wabot_config_dir }}/.env
+    environment:
+      - DB_PATH=/app/data/wabot.db
+      - AUTH_DIR=/app/auth_info
+    volumes:
+      - {{ wabot_data_dir }}/auth_info:/app/auth_info
+      - {{ wabot_data_dir }}:/app/data
+      - {{ wabot_config_dir }}/config.json:/app/config.json:ro
+      - {{ wabot_config_dir }}/prompts:/app/prompts:ro
+    restart: unless-stopped
+
+  server:
+    image: wabot-server:latest
+    env_file: {{ wabot_config_dir }}/.env
+    environment:
+      - PORT={{ wabot_port }}
+      - DB_PATH=/app/data/wabot.db
+    volumes:
+      - {{ wabot_data_dir }}:/app/data
+    ports:
+      - "127.0.0.1:{{ wabot_port }}:{{ wabot_port }}"
+    restart: unless-stopped
+    depends_on:
+      - bot

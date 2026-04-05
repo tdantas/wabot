@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(curl -s http://localhost:3000/api/stats)",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(ls -lh /workspaces/wabot/wabot.db*)",
+      "Bash(sqlite3 /workspaces/wabot/wabot.db \"SELECT COUNT\\(*\\) FROM messages;\")",
+      "Bash(time node -e \":*)",
+      "Bash(timeout 10 node -e \":*)",
+      "Bash(time curl:*)",
+      "Bash(node -e \":*)",
+      "WebSearch",
+      "Read(//proc/1/**)",
+      "Bash(tail -30 /workspaces/wabot/bot/logs/*.log)",
+      "Bash(ls -la /code/okivia/wabot/*.json)",
+      "Bash(grep -v \".json$\")",
+      "Bash(node -c bot/settings.js)",
+      "Bash(node -c bot/commands.js)",
+      "Bash(node -c bot/wa.js)",
+      "Bash(node -c server/server.js)",
+      "Bash(node -c /code/okivia/wabot/bot/monitor.js)",
+      "Bash(node -c /code/okivia/wabot/server/server.js)",
+      "Bash(node -c /code/okivia/wabot/bot/settings.js)",
+      "Bash(node -c /code/okivia/wabot/bot/wa.js)",
+      "Bash(node -c /code/okivia/wabot/bot/commands.js)",
+      "WebFetch(domain:mcp.apibrasil.io)",
+      "WebFetch(domain:doc.apibrasil.io)",
+      "WebFetch(domain:apibrasil.io)"
+    ]
+  }
+}

@@ -13,8 +13,23 @@ auth_info/
 contacts.json
 stats.json
 
-# environment
+# environment & secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+*.credentials
+credentials.json
+service-account*.json
+*-credentials.json
+*-secret.json
+*.gpg
 
 # logs
 *.log
@@ -26,3 +41,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Ansible secrets
+deploy/vars.yml

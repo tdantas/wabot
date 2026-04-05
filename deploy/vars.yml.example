@@ -1,0 +1,19 @@
+---
+# Copy to vars.yml and fill in your values
+# ansible-vault encrypt vars.yml  (recommended)
+
+wabot_domain: "wabot.okivia.net"
+wabot_gemini_api_key: "YOUR_GEMINI_API_KEY"
+wabot_football_api_key: "YOUR_FOOTBALL_API_KEY"
+wabot_jwt_secret: "CHANGE_ME_RANDOM_STRING"
+
+# Admin
+wabot_admin_email: "admin@example.com"
+wabot_admin_password: "changeme"
+
+# Optional overrides
+# wabot_port: 3001
+# wabot_tz: "Europe/Lisbon"
+# wabot_gemini_model: "gemini-2.5-flash"
+# wabot_log_level: "info"
+# wabot_verbose: "false"

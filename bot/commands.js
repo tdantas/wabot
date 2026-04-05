@@ -1,8 +1,12 @@
+const { v4: uuidv4 } = require('uuid')
 const stats = require('./stats')
 const contacts = require('./contacts')
 const gemini = require('./gemini')
 const football = require('./football')
 const settings = require('./settings')
+const { open } = require('./db')
+
+const LIVE_DOMAIN = process.env.LIVE_DOMAIN || 'http://localhost:3000'
 
 const commands = {
   help: {
@@ -220,6 +224,30 @@ const commands = {
       } catch (err) {
         require('./logger').error({ err }, 'Erro football')
         return 'Ocorreu um erro ao consultar dados de futebol.'
+      }
+    },
+  },
+
+  live: {
+    description: 'Gera link para ver ranking e gráficos do grupo',
+    usage: '/bot live',
+    aliases: ['live', 'aovivo', 'online', 'zaprats'],
+    handler(groupId, sender, args) {
+      const db = open()
+      const token = uuidv4()
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+      // invalidate previous tokens for this group
+      db.prepare('DELETE FROM live_tokens WHERE group_id = ?').run(groupId)
+
+      db.prepare('INSERT INTO live_tokens (token, group_id, created_by, expires_at) VALUES (?, ?, ?, ?)')
+        .run(token, groupId, sender, expiresAt)
+      db.close()
+
+      const link = `${LIVE_DOMAIN}/auth/${token}`
+      return {
+        privateMessage: `Aqui está o seu link de acesso para o ZapRats 📱🐀:\n\n${link}\n\n⏳ Válido por 24 horas\n🔒 Use apenas uma vez`,
+        groupReply: 'Link do ZapRat enviado no privado.',
       }
     },
   },

@@ -136,6 +136,50 @@ async function start() {
       await saveCreds()
     }
 
+    // bot adicionado a um grupo
+    if (events['group-participants.update']) {
+      for (const event of events['group-participants.update']) {
+        if (event.action !== 'add') continue
+
+        const botJid = sock.user?.id?.replace(/:\d+@/, '@')
+        const wasAdded = event.participants.some(p => p.replace(/:\d+@/, '@') === botJid)
+        if (!wasAdded) continue
+
+        const groupId = event.id
+        log.info({ groupId }, 'Bot adicionado a um grupo')
+
+        try {
+          // 1. registar grupo na DB
+          const meta = await sock.groupMetadata(groupId)
+          contacts.set(groupId, meta.subject)
+          settings.ensureGroup(groupId)
+
+          // sync participants
+          for (const p of meta.participants) {
+            if (p.notify) contacts.set(p.id, p.notify)
+          }
+
+          log.info({ groupId, name: meta.subject }, 'Grupo registado na DB')
+
+          // 2. mensagem de boas-vindas
+          await sock.sendMessage(groupId, {
+            text: `Olá! Sou o *ZapRats* 📱🐀\n\Digita !live para descobrir o campeão do grupo em mensagens.`
+          })
+
+          // 3. notificar admin
+          const adminNumber = process.env.ADMIN_PHONE
+          if (adminNumber) {
+            const adminJid = adminNumber.includes('@') ? adminNumber : `${adminNumber}@s.whatsapp.net`
+            await sock.sendMessage(adminJid, {
+              text: `🔔 Bot adicionado ao grupo:\n*${meta.subject}*\n\nID: ${groupId}\nParticipantes: ${meta.participants.length}`
+            })
+          }
+        } catch (err) {
+          log.error({ err, groupId }, 'Erro ao processar adição a grupo')
+        }
+      }
+    }
+
     // histórico recebido ao reconectar (mensagens offline)
     if (events['messaging-history.set']) {
       const monitoredGroups = new Set(settings.getListeningGroupIds())
@@ -189,6 +233,10 @@ async function start() {
         // ignora remoção de reação (texto vazio)
         if (!reaction.text) continue
 
+        // ignora reações do próprio bot
+        const botJid = sock.user?.id?.replace(/:\d+@/, '@')
+        if (sender.replace(/:\d+@/, '@') === botJid) continue
+
         log.info({ channel: from, group: contacts.getName(from), user: contacts.getName(sender) }, `${reaction.text} (reação)`)
         stats.track(from, sender)
       }
@@ -203,7 +251,10 @@ async function start() {
         const from = msg.key.remoteJid
 
         // só processa mensagens dos grupos monitorados
-        if (!monitoredGroups.has(from)) continue
+        if (!monitoredGroups.has(from)) {
+          log.debug({ from, monitoredCount: monitoredGroups.size }, 'Mensagem ignorada: grupo não monitorado')
+          continue
+        }
 
         const sender = msg.key.participant || from
         const pushName = msg.pushName
@@ -270,7 +321,9 @@ async function start() {
         log.info({ channel: from, group: contacts.getName(from), user: displayName }, logContent)
 
         // comandos só em texto
-        if (text && commands.parse(text)) {
+        const parsed = text ? commands.parse(text) : null
+        if (parsed) {
+          log.info({ channel: from, group: contacts.getName(from), user: displayName, command: parsed.command, alias: parsed.alias }, 'Comando recebido')
           const MINUTE = 60 * 1000
           const rl = config.rateLimit || {}
 
@@ -288,38 +341,51 @@ async function start() {
 
           const quoted = msg
 
-          if (commands.isTroll(from)) {
+          try {
+            if (commands.isTroll(from)) {
+              const reply = await commands.execute(from, sender, text)
+              if (reply) await sock.sendMessage(from, { text: String(reply) }, { quoted })
+              continue
+            }
+
+            const slow = commands.isSlow(text, from)
+            let loadingTimer = null
+            let loadingKey = null
+            let startTime = Date.now()
+
+            if (slow) {
+              const sent = await sock.sendMessage(from, { text: LOADING_FRAMES[0] }, { quoted })
+              loadingKey = sent.key
+              loadingTimer = startLoadingLoop(sock, from, loadingKey)
+            }
+
             const reply = await commands.execute(from, sender, text)
-            if (reply) await sock.sendMessage(from, { text: String(reply) }, { quoted })
-            continue
-          }
+            log.info({ channel: from, command: parsed.command, hasReply: !!reply }, 'Comando executado')
 
-          const slow = commands.isSlow(text, from)
-          let loadingTimer = null
-          let loadingKey = null
-          let startTime = Date.now()
+            if (slow) {
+              clearInterval(loadingTimer)
+              const elapsed = Date.now() - startTime
+              if (elapsed < LOADING_AFTER_COMPLETE) await new Promise(r => setTimeout(r, LOADING_AFTER_COMPLETE - elapsed))
+            }
 
-          if (slow) {
-            const sent = await sock.sendMessage(from, { text: LOADING_FRAMES[0] }, { quoted })
-            loadingKey = sent.key
-            loadingTimer = startLoadingLoop(sock, from, loadingKey)
-          }
-
-          const reply = await commands.execute(from, sender, text)
-
-          if (slow) {
-            clearInterval(loadingTimer)
-            const elapsed = Date.now() - startTime
-            if (elapsed < LOADING_AFTER_COMPLETE) await new Promise(r => setTimeout(r, LOADING_AFTER_COMPLETE - elapsed))
-          }
-
-          if (reply?.pendingLocation) {
-            const sent = await sock.sendMessage(from, { text: `Boa! Envia a tua localização respondendo a esta mensagem para eu procurar "${reply.query}" perto de ti.` }, { quoted })
-            pending.save(sent.key.id, from, sender, 'food', reply.query)
-          } else if (reply && loadingKey) {
-            await sock.sendMessage(from, { text: String(reply), edit: loadingKey })
-          } else if (reply) {
-            await sock.sendMessage(from, { text: String(reply) }, { quoted })
+            if (reply?.privateMessage) {
+              // send to private chat + react on group message
+              const senderJid = sender.includes('@lid') ? sender : sender.replace(/@.*/, '@s.whatsapp.net')
+              await sock.sendMessage(senderJid, { text: reply.privateMessage })
+              if (reply.groupReply) {
+                await sock.sendMessage(from, { text: reply.groupReply }, { quoted })
+              }
+            } else if (reply?.pendingLocation) {
+              const sent = await sock.sendMessage(from, { text: `Boa! Envia a tua localização respondendo a esta mensagem para eu procurar "${reply.query}" perto de ti.` }, { quoted })
+              pending.save(sent.key.id, from, sender, 'food', reply.query)
+            } else if (reply && loadingKey) {
+              await sock.sendMessage(from, { text: String(reply), edit: loadingKey })
+            } else if (reply) {
+              await sock.sendMessage(from, { text: String(reply) }, { quoted })
+            }
+          } catch (err) {
+            log.error({ err, channel: from, command: parsed.command, user: displayName }, 'Erro ao executar comando')
+            try { await sock.sendMessage(from, { text: 'Ocorreu um erro ao processar o comando.' }, { quoted }) } catch (_) {}
           }
         } else {
           // contabiliza apenas mensagens normais (não comandos)

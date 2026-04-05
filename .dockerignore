@@ -3,7 +3,13 @@ bot/node_modules
 server/node_modules
 bot/auth_info
 bot/wabot.db
+.env
 bot/.env
+data/
 .devcontainer
+.claude
 .git
 *.log
+*.db
+*.db-wal
+*.db-shm

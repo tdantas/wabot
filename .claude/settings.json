@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \":*)",
+      "Bash(ls /workspaces/wabot/*.js /workspaces/wabot/migrations/ /workspaces/wabot/prompts/ /workspaces/wabot/public/)",
+      "Bash(ls /workspaces/wabot/*.json /workspaces/wabot/*.js)",
+      "Bash(ls /workspaces/wabot/bot/prompts/*/)"
+    ]
+  }
+}

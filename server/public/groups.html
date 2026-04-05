@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WABot — Admin — Grupos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0b0f;
+      --surface: rgba(255,255,255,0.04);
+      --surface-hover: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.06);
+      --text: #e8e6e1;
+      --text-muted: #6b6860;
+      --accent: #e8a832;
+      --accent-glow: rgba(232,168,50,0.15);
+      --font-display: 'Bricolage Grotesque', serif;
+      --font-body: 'Outfit', sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 9999;
+    }
+
+    .bg-glow { position: fixed; border-radius: 50%; filter: blur(150px); opacity: 0.12; pointer-events: none; z-index: 0; }
+    .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; background: var(--accent); }
+    .bg-glow--2 { width: 500px; height: 500px; bottom: -200px; left: -150px; background: #5b3a8c; }
+
+    .container {
+      position: relative; z-index: 1;
+      max-width: 680px; margin: 0 auto; padding: 60px 24px 80px;
+    }
+
+    .header { margin-bottom: 48px; }
+    .header-top { display: flex; align-items: flex-start; justify-content: space-between; }
+
+    .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .brand-mark {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), #d4922a);
+      border-radius: 12px; display: grid; place-items: center;
+      font-family: var(--font-display); font-weight: 800; font-size: 1.1rem;
+      color: var(--bg); flex-shrink: 0;
+    }
+    .brand h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(2rem, 5vw, 2.8rem); letter-spacing: -1.5px; line-height: 1; }
+    .brand h1 span { color: var(--accent); }
+
+    .subtitle { font-size: 0.85rem; color: var(--text-muted); font-weight: 400; letter-spacing: 0.3px; margin-top: 6px; padding-left: 58px; }
+
+    .nav-links { display: flex; gap: 10px; margin-top: 6px; }
+    .nav-link {
+      font-size: 0.75rem; font-weight: 500; color: var(--text-muted);
+      text-decoration: none; padding: 6px 12px; border-radius: 6px;
+      border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .nav-link:hover { border-color: rgba(232,168,50,0.2); color: var(--accent); }
+
+    .groups { display: flex; flex-direction: column; gap: 12px; }
+
+    .group-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 22px 24px; cursor: pointer;
+      display: flex; align-items: center; gap: 16px;
+      transition: all 0.25s ease; text-decoration: none; color: inherit;
+      position: relative; overflow: hidden;
+    }
+    .group-card::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, var(--accent-glow), transparent 60%);
+      opacity: 0; transition: opacity 0.3s ease;
+    }
+    .group-card:hover { border-color: rgba(232,168,50,0.2); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    .group-card:hover::before { opacity: 1; }
+
+    .group-avatar {
+      width: 48px; height: 48px; border-radius: 14px;
+      background: linear-gradient(135deg, rgba(232,168,50,0.2), rgba(232,168,50,0.05));
+      border: 1px solid rgba(232,168,50,0.15);
+      display: grid; place-items: center; flex-shrink: 0;
+      position: relative; z-index: 1;
+    }
+    .group-avatar svg { width: 22px; height: 22px; color: var(--accent); }
+
+    .group-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
+    .group-name { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.3px; }
+    .group-label { font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; }
+
+    .group-arrow { color: var(--text-muted); font-size: 1.4rem; transition: all 0.25s; position: relative; z-index: 1; }
+    .group-card:hover .group-arrow { transform: translateX(4px); color: var(--accent); }
+
+    .empty { text-align: center; color: var(--text-muted); font-size: 0.9rem; padding: 60px 20px; }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="container">
+    <div class="header">
+      <div class="header-top">
+        <div>
+          <div class="brand">
+            <div class="brand-mark">W</div>
+            <h1>WA<span>Bot</span></h1>
+          </div>
+          <div class="subtitle">Admin — Grupos</div>
+        </div>
+        <div class="nav-links">
+          <a class="nav-link" href="/admin/settings.html">Definições</a>
+          <a class="nav-link" href="/admin/logout">Sair</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="groups" id="groups"></div>
+  </div>
+
+  <script>
+    const ADMIN = location.pathname.startsWith('/admin/')
+    const API_PREFIX = ADMIN ? '/admin/api' : '/api'
+    const PAGE_PREFIX = ADMIN ? '/admin' : ''
+
+    async function load() {
+      const res = await fetch(`${API_PREFIX}/groups`)
+      const groups = await res.json()
+      const container = document.getElementById('groups')
+
+      if (groups.length === 0) {
+        container.innerHTML = '<div class="empty">Nenhum grupo configurado</div>'
+        return
+      }
+
+      container.innerHTML = groups.map((g) => `
+        <a class="group-card" href="${PAGE_PREFIX}/group.html?id=${encodeURIComponent(g.id)}">
+          <div class="group-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div class="group-info">
+            <div class="group-name">${g.name}</div>
+            <div class="group-label">Grupo WhatsApp</div>
+          </div>
+          <span class="group-arrow">&rsaquo;</span>
+        </a>
+      `).join('')
+    }
+
+    load()
+  </script>
+</body>
+</html>

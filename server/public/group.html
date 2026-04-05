@@ -152,6 +152,21 @@
       font-weight: 400;
     }
 
+    /* --- period label --- */
+    .period-label {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+      margin-bottom: 14px;
+      letter-spacing: 0.2px;
+      opacity: 0;
+      animation: fadeUp 0.5s ease 0.11s forwards;
+    }
+    .period-label span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
     /* --- filters --- */
     .filters {
       margin-bottom: 24px;
@@ -587,6 +602,10 @@
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
           Gráficos
         </a>
+        <a class="back-link" id="calendarLink" style="color:var(--accent)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Calendário
+        </a>
         <div class="live-badge">
           <span class="live-dot"></span>
           Live
@@ -598,6 +617,8 @@
       <h1 class="group-name" id="title">Ranking</h1>
       <div class="updated-time" id="updated"></div>
     </div>
+
+    <div class="period-label" id="periodLabel"></div>
 
     <div class="filters">
       <div class="filter-presets" id="presets"></div>
@@ -619,6 +640,34 @@
   </div>
 
   <script>
+    // --- mode detection ---
+    const LIVE = location.pathname.startsWith('/live/')
+    const ADMIN = location.pathname.startsWith('/admin/')
+    const PAGE_PREFIX = LIVE ? '/live' : ADMIN ? '/admin' : ''
+    const API_PREFIX = LIVE ? '/live/api' : ADMIN ? '/admin/api' : '/api'
+
+    // update back link
+    if (ADMIN) {
+      const backLink = document.querySelector('.back-link[href="/"]')
+      if (backLink) backLink.href = '/admin/groups.html'
+    }
+
+    if (LIVE) {
+      document.querySelector('.back-link[href="/"]')?.remove()
+
+      // intercept 401 for expired sessions
+      const _fetch = window.fetch
+      window.fetch = function(url, opts) {
+        return _fetch(url, opts).then(res => {
+          if (res.status === 401) {
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Outfit,system-ui,sans-serif;background:#0a0b0f;color:#e8e6e1;margin:0"><div style="text-align:center;padding:48px;border-radius:16px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);max-width:400px"><h1 style="font-size:1.4rem;margin-bottom:12px;color:#e8a832">Acesso expirado</h1><p style="color:#a09d95;font-size:0.9rem;line-height:1.5">O teu acesso expirou. Peça um novo link com <b>!live</b> no grupo.</p></div></div>'
+            throw new Error('unauthorized')
+          }
+          return res
+        })
+      }
+    }
+
     const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
     function heatColor(total) {
@@ -635,7 +684,8 @@
     const params = new URLSearchParams(location.search)
     const groupId = params.get('id')
     if (!groupId) location.href = '/'
-    document.getElementById('chartsLink').href = `/charts.html?id=${groupId}`
+    document.getElementById('chartsLink').href = `${PAGE_PREFIX}/charts.html?id=${groupId}`
+    document.getElementById('calendarLink').href = `${PAGE_PREFIX}/calendar.html?id=${groupId}`
 
     // --- date helpers ---
     function localDate(d) {
@@ -666,6 +716,20 @@
     const $end = document.getElementById('endDate')
     const $dates = document.querySelector('.filter-dates')
 
+    function formatDatePT(dateStr) {
+      const [y, m, d] = dateStr.split('-')
+      return `${d}/${m}/${y}`
+    }
+
+    function updatePeriodLabel() {
+      const $label = document.getElementById('periodLabel')
+      if (startDate === endDate) {
+        $label.innerHTML = `Período: <span>${formatDatePT(startDate)}</span>`
+      } else {
+        $label.innerHTML = `Período: <span>${formatDatePT(startDate)}</span> a <span>${formatDatePT(endDate)}</span>`
+      }
+    }
+
     function initFilters() {
       const container = document.getElementById('presets')
       container.innerHTML = PRESETS.map(p =>
@@ -686,6 +750,7 @@
       $end.value = endDate
       $start.addEventListener('change', onDateChange)
       $end.addEventListener('change', onDateChange)
+      updatePeriodLabel()
     }
 
     function selectPreset(label) {
@@ -701,6 +766,7 @@
       openDrilldowns.group = null
       openDrilldowns.users.clear()
       updatePresetButtons()
+      updatePeriodLabel()
       fetchStats()
     }
 
@@ -723,6 +789,7 @@
       openDrilldowns.group = null
       openDrilldowns.users.clear()
       updatePresetButtons()
+      updatePeriodLabel()
       fetchStats()
     }
 
@@ -740,7 +807,8 @@
 
     // --- data fetching ---
     function apiUrl(path, extra = '') {
-      return `${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
+      const prefix = LIVE ? '/live' : ''
+      return `${prefix}${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
     }
 
     const FETCH_OPTS = { cache: 'no-cache' }
@@ -779,7 +847,7 @@
       if (openDrilldowns.group) { openDrilldowns.group = null; fetchStats(); return }
       const res = await fetch(apiUrl('/api/stats/daily'), FETCH_OPTS)
       const rows = await res.json()
-      openDrilldowns.group = { rows, title: 'Mensagens por dia', isNew: true }
+      openDrilldowns.group = { rows, title: 'Atividade por dia', isNew: true }
       fetchStats()
     }
 
@@ -889,7 +957,7 @@
                 <div class="rank-bar-fill" style="width:${barPct}%"></div>
               </div>
             </div>
-            <span class="rank-count">${item.count}<small>msg</small></span>
+            <span class="rank-count">${item.count}<small>ativ</small></span>
           </div>
           ${userDrilldown}`
       }).join('')}</div>`

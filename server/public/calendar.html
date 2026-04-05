@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WABot — Calendário</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0b0f;
+      --surface: rgba(255,255,255,0.035);
+      --border: rgba(255,255,255,0.06);
+      --border-accent: rgba(232,168,50,0.2);
+      --text: #e8e6e1;
+      --text-secondary: #a09d95;
+      --text-muted: #5a574f;
+      --accent: #e8a832;
+      --accent-soft: rgba(232,168,50,0.12);
+      --font-display: 'Bricolage Grotesque', serif;
+      --font-body: 'Outfit', sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 9999;
+    }
+
+    .bg-glow { position: fixed; border-radius: 50%; filter: blur(150px); pointer-events: none; z-index: 0; }
+    .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; background: var(--accent); opacity: 0.06; }
+    .bg-glow--2 { width: 500px; height: 500px; bottom: -150px; left: -150px; background: #4a2d7a; opacity: 0.08; }
+
+    /* --- topbar --- */
+    .topbar {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(10,11,15,0.85); backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    }
+
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-muted); text-decoration: none;
+      font-size: 0.78rem; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;
+      transition: color 0.2s; flex-shrink: 0;
+    }
+    .back-link:hover { color: var(--accent); }
+    .back-link svg { width: 16px; height: 16px; }
+
+    .topbar-title {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 1.1rem; letter-spacing: -0.5px; flex-shrink: 0;
+    }
+
+    .topbar-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+
+    .topbar-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+    .ctrl-btn {
+      font-family: var(--font-body); font-size: 0.72rem; font-weight: 500;
+      letter-spacing: 0.3px; padding: 5px 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
+    }
+    .ctrl-btn:hover { border-color: var(--border-accent); color: var(--text); }
+    .ctrl-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); font-weight: 600; }
+
+    /* --- month nav --- */
+    .month-nav {
+      display: flex; align-items: center; gap: 12px; margin-left: auto;
+    }
+    .month-nav-btn {
+      font-family: var(--font-body); font-size: 0.8rem; font-weight: 500;
+      width: 32px; height: 32px; border-radius: 8px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
+      display: grid; place-items: center;
+    }
+    .month-nav-btn:hover { border-color: var(--border-accent); color: var(--accent); }
+    .month-label {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 0.95rem; letter-spacing: 0.5px; min-width: 140px; text-align: center;
+    }
+
+    /* --- container --- */
+    .container {
+      position: relative; z-index: 1;
+      max-width: 1200px; margin: 0 auto; padding: 28px 24px 80px;
+    }
+
+    /* --- legend --- */
+    .legend {
+      display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
+      padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.75rem; font-weight: 500; color: var(--text-secondary);
+    }
+    .legend-avatar {
+      width: 24px; height: 24px; border-radius: 50%;
+      display: grid; place-items: center;
+      font-family: var(--font-display); font-weight: 800; font-size: 0.6rem;
+      color: #fff; flex-shrink: 0;
+    }
+    .legend-count { color: var(--text-muted); font-size: 0.68rem; }
+
+    /* --- calendar --- */
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 8px;
+    }
+    .cal-header {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 0.9rem; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-muted); text-align: center; padding: 8px 0 14px;
+    }
+    .cal-day {
+      border-radius: 12px; padding: 14px 10px; text-align: center;
+      background: rgba(255,255,255,0.02); border: 1px solid var(--border);
+      transition: all 0.2s; min-height: 120px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    }
+    .cal-day.empty { border-color: transparent; background: transparent; min-height: 0; }
+    .cal-day.has-data:hover { background: rgba(255,255,255,0.05); }
+    .cal-day.today { border-color: var(--border-accent); background: rgba(232,168,50,0.04); }
+    .cal-date {
+      font-size: 0.9rem; color: var(--text-muted); font-weight: 600;
+    }
+    .cal-day.today .cal-date { color: var(--accent); font-weight: 700; }
+    .cal-avatar {
+      width: 42px; height: 42px; border-radius: 50%;
+      display: grid; place-items: center;
+      font-family: var(--font-display); font-weight: 800; font-size: 0.9rem;
+      color: #fff; flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .cal-name {
+      font-size: 0.82rem; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .cal-count {
+      font-family: var(--font-display);
+      font-size: 0.82rem; color: var(--text); font-weight: 700;
+    }
+    .cal-day-name {
+      font-size: 0.6rem; color: var(--text-muted); font-weight: 400;
+      text-transform: uppercase; letter-spacing: 0.3px;
+    }
+
+    @media (max-width: 700px) {
+      .container { padding: 20px 12px 60px; }
+      .calendar-grid { gap: 5px; }
+      .cal-day { min-height: 90px; padding: 10px 6px; }
+      .cal-avatar { width: 34px; height: 34px; font-size: 0.75rem; }
+      .cal-name { font-size: 0.7rem; }
+      .cal-date { font-size: 0.78rem; }
+      .topbar { padding: 12px 16px; }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="topbar">
+    <a class="back-link" id="backLink" href="/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      Ranking
+    </a>
+    <span class="topbar-title" id="title">Calendário</span>
+    <span class="topbar-divider"></span>
+    <div class="month-nav">
+      <button class="month-nav-btn" id="prevMonth">&larr;</button>
+      <span class="month-label" id="monthLabel"></span>
+      <button class="month-nav-btn" id="nextMonth">&rarr;</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="legend" id="legend"></div>
+    <div class="calendar-grid" id="calendarGrid"></div>
+  </div>
+
+  <script>
+    const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+    const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+    const COLORS = ['#e8a832', '#4ade80', '#60a5fa', '#f472b6', '#a78bfa',
+      '#f97316', '#06b6d4', '#84cc16', '#e879f9', '#fb7185']
+
+    const LIVE = location.pathname.startsWith('/live/')
+    const ADMIN = location.pathname.startsWith('/admin/')
+    const PAGE_PREFIX = LIVE ? '/live' : ADMIN ? '/admin' : ''
+
+    if (LIVE) {
+      const _fetch = window.fetch
+      window.fetch = function(url, opts) {
+        return _fetch(url, opts).then(res => {
+          if (res.status === 401) {
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Outfit,system-ui,sans-serif;background:#0a0b0f;color:#e8e6e1;margin:0"><div style="text-align:center;padding:48px;border-radius:16px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);max-width:400px"><h1 style="font-size:1.4rem;margin-bottom:12px;color:#e8a832">Acesso expirado</h1><p style="color:#a09d95;font-size:0.9rem;line-height:1.5">O teu acesso expirou. Peça um novo link com <b>!live</b> no grupo.</p></div></div>'
+            throw new Error('unauthorized')
+          }
+          return res
+        })
+      }
+    }
+
+    const params = new URLSearchParams(location.search)
+    const groupId = params.get('id')
+    if (!groupId) location.href = '/'
+    document.getElementById('backLink').href = `${PAGE_PREFIX}/group.html?id=${groupId}`
+
+    function localDate(d) {
+      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
+    }
+    function todayStr() { return localDate(new Date()) }
+
+    // --- current month state ---
+    const now = new Date()
+    let currentYear = now.getFullYear()
+    let currentMonth = now.getMonth()
+
+    function getMonthRange(year, month) {
+      const first = new Date(year, month, 1)
+      const last = new Date(year, month + 1, 0)
+      return {
+        start: localDate(first),
+        end: localDate(last),
+        firstDow: first.getDay(),
+        daysInMonth: last.getDate(),
+      }
+    }
+
+    // --- nav ---
+    document.getElementById('prevMonth').onclick = () => { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear-- }; loadCalendar() }
+    document.getElementById('nextMonth').onclick = () => { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++ }; loadCalendar() }
+
+    // --- color map for senders ---
+    const senderColorMap = new Map()
+    let colorIdx = 0
+    function getColor(sender) {
+      if (!senderColorMap.has(sender)) {
+        senderColorMap.set(sender, COLORS[colorIdx % COLORS.length])
+        colorIdx++
+      }
+      return senderColorMap.get(sender)
+    }
+
+    function getInitials(name) {
+      const parts = name.split(' ').filter(Boolean)
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+      return name.slice(0, 2).toUpperCase()
+    }
+
+    async function loadCalendar() {
+      const { start, end, firstDow, daysInMonth } = getMonthRange(currentYear, currentMonth)
+      document.getElementById('monthLabel').textContent = `${MONTHS[currentMonth]} ${currentYear}`
+
+      const url = `${PAGE_PREFIX}/api/stats/daily-winners?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`
+      const res = await fetch(url, { cache: 'no-cache' })
+      const winners = await res.json()
+
+      // also get group name
+      const statsRes = await fetch(`${PAGE_PREFIX}/api/stats?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`, { cache: 'no-cache' })
+      const stats = await statsRes.json()
+      document.getElementById('title').textContent = stats.name
+      document.title = `WABot — ${stats.name} — Calendário`
+
+      const winnerMap = new Map(winners.map(w => [w.date, w]))
+      const todayDate = todayStr()
+
+      // build legend: unique winners for this month
+      const uniqueWinners = new Map()
+      for (const w of winners) {
+        if (!uniqueWinners.has(w.sender)) {
+          uniqueWinners.set(w.sender, { name: w.name, count: 0 })
+        }
+        uniqueWinners.get(w.sender).count++
+      }
+      // sort by count desc
+      const legendItems = [...uniqueWinners.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([sender, info]) => {
+          const color = getColor(sender)
+          return `<div class="legend-item">
+            <div class="legend-avatar" style="background:${color}">${getInitials(info.name)}</div>
+            ${info.name.split(' ')[0]} <span class="legend-count">${info.count} dia${info.count > 1 ? 's' : ''}</span>
+          </div>`
+        })
+      document.getElementById('legend').innerHTML = legendItems.join('')
+
+      // build grid
+      let html = DAYS.map(d => `<div class="cal-header">${d}</div>`).join('')
+
+      // padding
+      for (let i = 0; i < firstDow; i++) html += '<div class="cal-day empty"></div>'
+
+      // days
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        const winner = winnerMap.get(dateStr)
+        const isToday = dateStr === todayDate
+
+        if (winner) {
+          const color = getColor(winner.sender)
+          html += `
+            <div class="cal-day has-data${isToday ? ' today' : ''}">
+              <div class="cal-date">${day}</div>
+              <div class="cal-avatar" style="background:${color}">${getInitials(winner.name)}</div>
+              <div class="cal-name" title="${winner.name}">${winner.name.split(' ')[0]}</div>
+              <div class="cal-count">${winner.total} ativ</div>
+            </div>`
+        } else {
+          html += `
+            <div class="cal-day${isToday ? ' today' : ''}">
+              <div class="cal-date">${day}</div>
+            </div>`
+        }
+      }
+
+      document.getElementById('calendarGrid').innerHTML = html
+    }
+
+    loadCalendar()
+  </script>
+</body>
+</html>
