@@ -111,4 +111,24 @@ async function ask(userMessage, command = 'ai', alias = null, options = {}) {
   return String(text).trim()
 }
 
-module.exports = { ask }
+async function transcribe(audioBuffer, mimeType) {
+  const base64 = audioBuffer.toString('base64')
+  const systemPrompt = buildSystemPrompt('transcript')
+  const result = await ai.models.generateContent({
+    model: MODEL,
+    contents: [
+      { text: 'Transcreve este áudio.' },
+      { inlineData: { mimeType, data: base64 } }
+    ],
+    config: {
+      systemInstruction: systemPrompt,
+    },
+  })
+  return (result.text || '').trim()
+}
+
+async function summarize(url) {
+  return ask(`Resume este artigo: ${url}`, 'resumo')
+}
+
+module.exports = { ask, transcribe, summarize }

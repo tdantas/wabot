@@ -1,0 +1,19 @@
+---
+- name: Provision WABot host
+  hosts: wabot
+  become: true
+
+  vars:
+    wabot_dir: /opt/wabot
+    wabot_config_dir: /etc/wabot
+    wabot_data_dir: /var/lib/wabot
+    wabot_port: 3001
+    wabot_db_name: wabot
+    wabot_db_user: wabot
+    caddy_config_dir: /etc/caddy
+
+  vars_files:
+    - vars.yml
+
+  roles:
+    - build-host

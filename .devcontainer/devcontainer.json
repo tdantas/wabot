@@ -1,13 +1,24 @@
 {
   "name": "wabot",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
-  "features": {},
-  "forwardPorts": [],
-  "postCreateCommand": "npm install",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/wabot",
+  "forwardPorts": [3000, 5433],
+  "portsAttributes": {
+    "onAutoForward": "openBrowserOnce"
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "silent"
+  },
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && cd bot && npm install && cd ../server && npm install",
+  "containerEnv": {
+    "DATABASE_URL": "postgres://wabot:wabot@timescaledb:5432/wabot"
+  },
   "customizations": {
     "vscode": {
       "extensions": [
-        "dbaeumer.vscode-eslint"
+        "dbaeumer.vscode-eslint",
+        "anthropic.claude-code"
       ]
     }
   }

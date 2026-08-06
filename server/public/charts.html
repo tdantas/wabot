@@ -2,93 +2,34 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
   <title>WABot — Gráficos</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <style>
-    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-    :root {
-      --bg: #0a0b0f;
-      --surface: rgba(255,255,255,0.035);
-      --border: rgba(255,255,255,0.06);
-      --border-accent: rgba(232,168,50,0.2);
-      --text: #e8e6e1;
-      --text-secondary: #a09d95;
-      --text-muted: #5a574f;
-      --accent: #e8a832;
-      --accent-soft: rgba(232,168,50,0.12);
-      --font-display: 'Bricolage Grotesque', serif;
-      --font-body: 'Outfit', sans-serif;
-    }
-
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      overflow-x: hidden;
-    }
-
-    body::before {
-      content: '';
-      position: fixed; inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none; z-index: 9999;
-    }
-
-    .bg-glow { position: fixed; border-radius: 50%; filter: blur(150px); pointer-events: none; z-index: 0; }
     .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; background: var(--accent); opacity: 0.06; }
     .bg-glow--2 { width: 500px; height: 500px; bottom: -150px; left: -150px; background: #4a2d7a; opacity: 0.08; }
 
-    /* --- full-width layout --- */
-    .topbar {
-      position: sticky; top: 0; z-index: 10;
-      background: rgba(10,11,15,0.85); backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 28px;
-      display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    .chart-filters {
+      position: relative; z-index: 1;
+      padding: 16px 24px 0;
     }
-
-    .back-link {
-      display: inline-flex; align-items: center; gap: 6px;
-      color: var(--text-muted); text-decoration: none;
-      font-size: 0.78rem; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;
-      transition: color 0.2s; flex-shrink: 0;
+    @media (min-width: 701px) {
+      body.has-bottom-nav .chart-filters { margin-left: 200px; }
     }
-    .back-link:hover { color: var(--accent); }
-    .back-link svg { width: 16px; height: 16px; }
-
-    .topbar-title {
-      font-family: var(--font-display); font-weight: 800;
-      font-size: 1.1rem; letter-spacing: -0.5px; flex-shrink: 0;
+    @media (max-width: 700px) {
+      .chart-filters { padding: 12px 12px 0; }
     }
-
-    .topbar-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
-
-    .topbar-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-
-    .ctrl-btn {
-      font-family: var(--font-body); font-size: 0.72rem; font-weight: 500;
-      letter-spacing: 0.3px; padding: 5px 12px; border-radius: 6px;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
-    }
-    .ctrl-btn:hover { border-color: var(--border-accent); color: var(--text); }
-    .ctrl-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); font-weight: 600; }
-
-    .date-controls { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
-    .date-controls label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
-    .date-controls input[type="date"] {
-      font-family: var(--font-body); font-size: 0.75rem; padding: 4px 8px;
-      border-radius: 6px; border: 1px solid var(--border);
-      background: var(--surface); color: var(--text); outline: none;
-      transition: border-color 0.2s; color-scheme: dark;
-    }
-    .date-controls input[type="date"]:focus { border-color: var(--border-accent); }
 
     /* --- top 5 panel --- */
     .top5-panel {
@@ -178,11 +119,12 @@
       font-family: var(--font-display); font-weight: 700;
       font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary);
     }
-    .chart-toggle { display: flex; gap: 3px; }
+    .chart-toggle { display: flex; gap: 4px; }
     .toggle-btn {
-      font-family: var(--font-body); font-size: 0.65rem; font-weight: 500;
-      padding: 3px 8px; border-radius: 5px; border: 1px solid var(--border);
+      font-family: var(--font-body); font-size: 0.7rem; font-weight: 500;
+      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
       background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+      min-height: 36px; display: inline-flex; align-items: center;
     }
     .toggle-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); }
 
@@ -198,7 +140,6 @@
       .dashboard { grid-template-columns: 1fr; padding: 16px 12px 60px; }
       .chart-card.span-2, .chart-card.span-3 { grid-column: span 1; }
 
-      .topbar { padding: 12px 16px; }
       .user-pills { margin-left: 0; width: 100%; }
     }
   </style>
@@ -208,24 +149,56 @@
   <div class="bg-glow bg-glow--2"></div>
 
   <div class="topbar">
-    <a class="back-link" id="backLink" href="/">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-      Ranking
-    </a>
     <span class="topbar-title" id="title">Gráficos</span>
-    <span class="topbar-divider"></span>
-    <div class="topbar-controls" id="controls">
-      <button class="ctrl-btn active" data-range="7">7d</button>
-      <button class="ctrl-btn" data-range="15">15d</button>
-      <button class="ctrl-btn" data-range="30">30d</button>
-      <div class="date-controls">
-        <label>De</label><input type="date" id="startDate">
-        <label>Até</label><input type="date" id="endDate">
-      </div>
+  </div>
+
+  <div class="chart-filters">
+    <div class="filter-presets" id="controls">
+      <button class="filter-btn active" data-range="7">7 dias</button>
+      <button class="filter-btn" data-range="15">15 dias</button>
+      <button class="filter-btn" data-range="30">30 dias</button>
+      <button class="filter-btn" data-preset="custom">Custom</button>
+    </div>
+    <div class="filter-dates" id="chartDates">
+      <label>De</label><input type="date" id="startDate">
+      <label>Até</label><input type="date" id="endDate">
     </div>
   </div>
 
-  <div class="dashboard">
+  <div class="dashboard ui-loading" id="skelCharts" style="pointer-events:none">
+    <div class="ui-card" style="grid-column:span 3;padding:20px 24px">
+      <div class="ui-shimmer ui-text" style="width:140px;margin-bottom:16px"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="ui-shimmer" style="height:48px;width:120px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:48px;width:100px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:48px;width:130px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:48px;width:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:48px;width:110px;border-radius:12px"></div>
+      </div>
+    </div>
+    <div class="ui-card" style="grid-column:span 2;padding:18px;min-height:300px">
+      <div class="ui-shimmer ui-text" style="width:180px;margin-bottom:14px"></div>
+      <div class="ui-shimmer" style="height:100%;min-height:240px;border-radius:8px"></div>
+    </div>
+    <div class="ui-card" style="padding:18px;min-height:300px">
+      <div class="ui-shimmer ui-text" style="width:100px;margin-bottom:14px"></div>
+      <div class="ui-shimmer" style="height:100%;min-height:240px;border-radius:8px"></div>
+    </div>
+    <div class="ui-card" style="padding:18px;min-height:260px">
+      <div class="ui-shimmer ui-text" style="width:130px;margin-bottom:14px"></div>
+      <div class="ui-shimmer" style="height:100%;min-height:200px;border-radius:8px"></div>
+    </div>
+    <div class="ui-card" style="padding:18px;min-height:260px">
+      <div class="ui-shimmer ui-text" style="width:110px;margin-bottom:14px"></div>
+      <div class="ui-shimmer" style="height:100%;min-height:200px;border-radius:8px"></div>
+    </div>
+    <div class="ui-card" style="padding:18px;min-height:260px">
+      <div class="ui-shimmer ui-text" style="width:150px;margin-bottom:14px"></div>
+      <div class="ui-shimmer" style="height:100%;min-height:200px;border-radius:8px"></div>
+    </div>
+  </div>
+
+  <div class="dashboard data-content">
     <!-- top 5 panel -->
     <div class="top5-panel">
       <div class="top5-header">
@@ -275,6 +248,7 @@
     </div>
   </div>
 
+  <script src="shared.js"></script>
   <script>
     const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
     const COLORS = [
@@ -287,34 +261,10 @@
     const MANHA_COLOR = '#f0a030'
     const NOITE_COLOR = '#7c6cfa'
 
-    const LIVE = location.pathname.startsWith('/live/')
-    const ADMIN = location.pathname.startsWith('/admin/')
-    const PAGE_PREFIX = LIVE ? '/live' : ADMIN ? '/admin' : ''
-
-    if (LIVE) {
-      const _fetch = window.fetch
-      window.fetch = function(url, opts) {
-        return _fetch(url, opts).then(res => {
-          if (res.status === 401) {
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Outfit,system-ui,sans-serif;background:#0a0b0f;color:#e8e6e1;margin:0"><div style="text-align:center;padding:48px;border-radius:16px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);max-width:400px"><h1 style="font-size:1.4rem;margin-bottom:12px;color:#e8a832">Acesso expirado</h1><p style="color:#a09d95;font-size:0.9rem;line-height:1.5">O teu acesso expirou. Peça um novo link com <b>!live</b> no grupo.</p></div></div>'
-            throw new Error('unauthorized')
-          }
-          return res
-        })
-      }
-    }
-
-    const params = new URLSearchParams(location.search)
-    const groupId = params.get('id')
     if (!groupId) location.href = '/'
-    document.getElementById('backLink').href = `${PAGE_PREFIX}/group.html?id=${groupId}`
+
 
     // --- helpers ---
-    function localDate(d) {
-      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
-    }
-    function todayStr() { return localDate(new Date()) }
-    function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localDate(d) }
     function apiUrl(path, extra = '') {
       return `${PAGE_PREFIX}${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
     }
@@ -333,25 +283,40 @@
     }
 
     let startDate = daysAgoStr(6), endDate = todayStr(), activityType = 'line'
-    const FETCH_OPTS = { cache: 'no-cache' }
 
     const $start = document.getElementById('startDate')
     const $end = document.getElementById('endDate')
     $start.value = startDate; $end.value = endDate
 
     // --- controls ---
+    const $chartDates = document.getElementById('chartDates')
+
     document.getElementById('controls').addEventListener('click', (e) => {
+      const customBtn = e.target.closest('[data-preset="custom"]')
+      if (customBtn) {
+        const isVisible = $chartDates.classList.toggle('visible')
+        updateChartButtons(isVisible ? 'custom' : '7')
+        return
+      }
       const btn = e.target.closest('[data-range]')
       if (!btn) return
       startDate = daysAgoStr(parseInt(btn.dataset.range) - 1); endDate = todayStr()
       $start.value = startDate; $end.value = endDate
-      document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'))
-      btn.classList.add('active')
+      $chartDates.classList.remove('visible')
+      updateChartButtons(btn.dataset.range)
       loadAll()
     })
-    $start.addEventListener('change', () => { startDate = $start.value; clearActive(); loadAll() })
-    $end.addEventListener('change', () => { endDate = $end.value; clearActive(); loadAll() })
-    function clearActive() { document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active')) }
+
+    $start.addEventListener('change', () => { startDate = $start.value; updateChartButtons('custom'); loadAll() })
+    $end.addEventListener('change', () => { endDate = $end.value; updateChartButtons('custom'); loadAll() })
+
+    function updateChartButtons(active) {
+      document.querySelectorAll('#controls .filter-btn').forEach(b => {
+        const isRange = b.dataset.range === active
+        const isCustom = b.dataset.preset === 'custom' && active === 'custom'
+        b.classList.toggle('active', isRange || isCustom)
+      })
+    }
 
     document.querySelector('[data-target="activity"]').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-type]')
@@ -426,7 +391,7 @@
         return `<div class="top5-card ${cls}" data-sender="${u.sender}">
           <div class="top5-rank">
             <span class="top5-pos" style="color:${u.color}">${posLabel}</span>
-            <span class="top5-name">${u.name}</span>
+            <span class="top5-name">${esc(u.name)}</span>
           </div>
           <div class="top5-count">${u.total}<small>ativ</small></div>
           <div class="top5-bar">
@@ -475,22 +440,26 @@
 
       // reload filtered charts
       const sp = sendersParam()
-      const [rWeekday, rPeriod, rPeriodWd, rTrend] = await Promise.all([
-        fetch(apiUrl('/api/stats/by-weekday', sp), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/by-period', sp), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/period-weekday', sp), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/trend', sp), FETCH_OPTS),
-      ])
+      try {
+        const [rWeekday, rPeriod, rPeriodWd, rTrend] = await Promise.all([
+          fetch(apiUrl('/api/stats/by-weekday', sp), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/by-period', sp), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/period-weekday', sp), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/trend', sp), FETCH_OPTS),
+        ])
 
-      cachedWeekday = await rWeekday.json()
-      cachedPeriod = await rPeriod.json()
-      cachedPeriodWeekday = await rPeriodWd.json()
-      cachedTrend = await rTrend.json()
+        cachedWeekday = await rWeekday.json()
+        cachedPeriod = await rPeriod.json()
+        cachedPeriodWeekday = await rPeriodWd.json()
+        cachedTrend = await rTrend.json()
 
-      renderWeekdayChart()
-      renderPeriodChart()
-      renderPeriodWeekdayChart()
-      renderTrendChart()
+        renderWeekdayChart()
+        renderPeriodChart()
+        renderPeriodWeekdayChart()
+        renderTrendChart()
+      } catch (err) {
+        console.error('Failed to sync charts', err)
+      }
     }
 
     // =====================
@@ -508,7 +477,7 @@
       const labels = allDates.map(dateLabel)
       const datasets = cachedActivity.users.map((user, i) => {
         const c = COLORS[i % COLORS.length]
-        const dayMap = new Map(user.days.map(d => [d.date, d.total]))
+        const dayMap = new Map(user.days.map(d => [d.date.slice(0, 10), d.total]))
         const values = allDates.map(date => dayMap.get(date) || 0)
         return activityType === 'line' ? {
           label: user.name, data: values,
@@ -547,7 +516,7 @@
       if (!cachedTrend) return
       const allDates = buildDateRange()
       const labels = allDates.map(dateLabel)
-      const dayMap = new Map(cachedTrend.map(r => [r.date, r.total]))
+      const dayMap = new Map(cachedTrend.map(r => [r.date.slice(0, 10), r.total]))
       const values = allDates.map(d => dayMap.get(d) || 0)
       makeChart('chartTrend', {
         type: 'line', data: { labels, datasets: [{
@@ -694,14 +663,20 @@
     // LOAD ALL
     // =====================
     async function loadAll() {
-      const [rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar] = await Promise.all([
-        fetch(apiUrl('/api/stats/top-users-daily'), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/trend'), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/by-weekday'), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/by-period'), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/period-weekday'), FETCH_OPTS),
-        fetch(apiUrl('/api/stats/users-weekday'), FETCH_OPTS),
-      ])
+      let rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar
+      try {
+        [rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar] = await Promise.all([
+          fetch(apiUrl('/api/stats/top-users-daily'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/trend'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/by-weekday'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/by-period'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/period-weekday'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/users-weekday'), FETCH_OPTS),
+        ])
+      } catch (err) {
+        document.getElementById('userPills').innerHTML = '<div style="color:var(--text-muted);padding:12px;text-align:center;width:100%">Erro ao carregar dados. Tente novamente.</div>'
+        return
+      }
 
       cachedActivity = await rActivity.json()
       cachedTrend = await rTrend.json()
@@ -720,15 +695,19 @@
       activeUsers = new Set(allUsers.map(u => u.sender))
       renderPills()
 
+
       renderActivityChart()
       renderTrendChart()
       renderWeekdayChart()
       renderPeriodChart()
       renderPeriodWeekdayChart()
       renderRadarChart()
+
+      requestAnimationFrame(() => document.body.classList.add('loaded'))
     }
 
     loadAll()
+    initPullToRefresh(loadAll)
   </script>
 </body>
 </html>

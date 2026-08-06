@@ -14,16 +14,13 @@ const path = require('path')
 
 const log = require('./logger')
 const monitor = require('./monitor')
-const { init } = require('./db')
+const { init, sql } = require('./db')
 const stats = require('./stats')
+const { ACTIVITY_TYPES } = stats
 const commands = require('./commands')
 const contacts = require('./contacts')
 const ratelimit = require('./ratelimit')
 const settings = require('./settings')
-
-// garante que as tabelas existem
-init()
-
 const pending = require('./pending')
 
 const baileysLogger = pino({ level: 'silent' })
@@ -74,6 +71,8 @@ async function start() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
     },
+    shouldSyncHistoryMessage: () => false,
+    syncFullHistory: false,
   })
 
   sock.ev.process(async (events) => {
@@ -104,30 +103,30 @@ async function start() {
 
         // seed DB from config.json on first run
         const config = loadConfig()
-        if (settings.seedFromConfig(config)) {
+        if (await settings.seedFromConfig(config)) {
           log.info('Configuração migrada de config.json para a base de dados')
         }
 
         // sync commands to DB
-        settings.syncCommands(commands.getCommandList())
+        await settings.syncCommands(commands.getCommandList())
 
         // sync all groups and their participants
         const groups = await sock.groupFetchAllParticipating()
         for (const g of Object.values(groups)) {
-          contacts.set(g.id, g.subject)
-          settings.ensureGroup(g.id)
+          await contacts.set(g.id, g.subject)
+          await settings.ensureGroup(g.id)
           for (const p of g.participants) {
-            if (p.notify) contacts.set(p.id, p.notify)
+            if (p.notify) await contacts.set(p.id, p.notify)
           }
         }
 
-        const listening = settings.getListeningGroupIds()
+        const listening = await settings.getListeningGroupIds()
         if (listening.length === 0) {
           log.warn('Nenhum grupo configurado para escuta. Use a interface web para ativar grupos.')
           return
         }
 
-        const groupNames = listening.map((id) => contacts.getName(id))
+        const groupNames = await Promise.all(listening.map(id => contacts.getName(id)))
         log.info({ groups: groupNames }, `Monitorando ${listening.length} grupo(s). Aguardando mensagens...`)
       }
     }
@@ -136,9 +135,26 @@ async function start() {
       await saveCreds()
     }
 
+    // capture JID→LID mappings from contacts updates
+    if (events['contacts.update']) {
+      for (const contact of events['contacts.update']) {
+        if (contact.id && contact.lid) {
+          await contacts.mapJid(contact.id, contact.lid)
+        }
+      }
+    }
+    if (events['contacts.upsert']) {
+      for (const contact of events['contacts.upsert']) {
+        if (contact.id && contact.lid) {
+          await contacts.mapJid(contact.id, contact.lid)
+        }
+      }
+    }
+
     // bot adicionado a um grupo
     if (events['group-participants.update']) {
-      for (const event of events['group-participants.update']) {
+      const gpUpdates = Array.isArray(events['group-participants.update']) ? events['group-participants.update'] : [events['group-participants.update']]
+      for (const event of gpUpdates) {
         if (event.action !== 'add') continue
 
         const botJid = sock.user?.id?.replace(/:\d+@/, '@')
@@ -149,24 +165,20 @@ async function start() {
         log.info({ groupId }, 'Bot adicionado a um grupo')
 
         try {
-          // 1. registar grupo na DB
           const meta = await sock.groupMetadata(groupId)
-          contacts.set(groupId, meta.subject)
-          settings.ensureGroup(groupId)
+          await contacts.set(groupId, meta.subject)
+          await settings.ensureGroup(groupId)
 
-          // sync participants
           for (const p of meta.participants) {
-            if (p.notify) contacts.set(p.id, p.notify)
+            if (p.notify) await contacts.set(p.id, p.notify)
           }
 
           log.info({ groupId, name: meta.subject }, 'Grupo registado na DB')
 
-          // 2. mensagem de boas-vindas
           await sock.sendMessage(groupId, {
-            text: `Olá! Sou o *ZapRats* 📱🐀\n\Digita !live para descobrir o campeão do grupo em mensagens.`
+            text: `Olá! Digita !live para ver o Group Usage Report.`
           })
 
-          // 3. notificar admin
           const adminNumber = process.env.ADMIN_PHONE
           if (adminNumber) {
             const adminJid = adminNumber.includes('@') ? adminNumber : `${adminNumber}@s.whatsapp.net`
@@ -180,83 +192,57 @@ async function start() {
       }
     }
 
-    // histórico recebido ao reconectar (mensagens offline)
-    if (events['messaging-history.set']) {
-      const monitoredGroups = new Set(settings.getListeningGroupIds())
-      const { messages } = events['messaging-history.set']
-
-      let count = 0
-      for (const msg of messages) {
-        const from = msg.key.remoteJid
-        if (!monitoredGroups.has(from)) continue
-
-        // ignora respostas programáticas do bot (fromMe sem participant e sem pushName)
-        if (msg.key.fromMe && !msg.key.participant && !msg.pushName) continue
-
-        const sender = msg.key.participant || (msg.key.fromMe ? sock.user.id : from)
-        const pushName = msg.pushName
-        if (pushName) contacts.set(sender, pushName)
-
-        const text = msg.message?.conversation
-          || msg.message?.extendedTextMessage?.text
-          || ''
-
-        const hasMedia = !!(msg.message?.imageMessage
-          || msg.message?.videoMessage
-          || msg.message?.audioMessage
-          || msg.message?.stickerMessage
-          || msg.message?.documentMessage)
-
-        if (!text && !hasMedia) continue
-        if (text && commands.parse(text)) continue
-
-        stats.track(from, sender)
-        count++
-      }
-
-      if (count > 0) {
-        log.info(`Histórico offline: ${count} mensagens contabilizadas`)
-      }
-    }
-
-    // contabiliza reações como mensagens
+// contabiliza reações como mensagens
     if (events['messages.reaction']) {
-      const monitoredGroups = new Set(settings.getListeningGroupIds())
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
 
       for (const { key, reaction } of events['messages.reaction']) {
         const from = key.remoteJid
         if (!monitoredGroups.has(from)) continue
 
-        const sender = reaction.key?.participant || reaction.key?.remoteJid
+        const sender = contacts.toLid(reaction.key?.participant || reaction.key?.remoteJid)
         if (!sender) continue
 
-        // ignora remoção de reação (texto vazio)
         if (!reaction.text) continue
 
-        // ignora reações do próprio bot
         const botJid = sock.user?.id?.replace(/:\d+@/, '@')
         if (sender.replace(/:\d+@/, '@') === botJid) continue
 
-        log.info({ channel: from, group: contacts.getName(from), user: contacts.getName(sender) }, `${reaction.text} (reação)`)
-        stats.track(from, sender)
+        log.info({ channel: from, group: await contacts.getName(from), sender, user: await contacts.getName(sender) }, `${reaction.text} (reação)`)
+        await stats.track(from, sender, ACTIVITY_TYPES.REACTION)
+      }
+    }
+
+    // logging de receipts de leitura
+    if (events['message-receipt.update']) {
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
+
+      for (const { key, receipt } of events['message-receipt.update']) {
+        const from = key.remoteJid
+        if (!monitoredGroups.has(from)) continue
+        if (!receipt.readTimestamp) continue
+
+        const reader = contacts.toLid(receipt.userJid)
+        if (!reader) continue
+
+        log.info({ channel: from, group: await contacts.getName(from), sender: reader, user: await contacts.getName(reader) }, 'leu mensagem')
       }
     }
 
     if (events['messages.upsert']) {
       const config = loadConfig()
-      const monitoredGroups = new Set(settings.getListeningGroupIds())
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
       const { messages } = events['messages.upsert']
 
       for (const msg of messages) {
         const from = msg.key.remoteJid
 
-        // só processa mensagens dos grupos monitorados
         if (!monitoredGroups.has(from)) {
           log.debug({ from, monitoredCount: monitoredGroups.size }, 'Mensagem ignorada: grupo não monitorado')
           continue
         }
 
-        const sender = msg.key.participant || from
+        const sender = contacts.toLid(msg.key.participant || from)
         const pushName = msg.pushName
         const text = msg.message?.conversation
           || msg.message?.extendedTextMessage?.text
@@ -271,21 +257,20 @@ async function start() {
         const location = msg.message?.locationMessage
 
         // atualiza nome do contato
-        if (pushName) contacts.set(sender, pushName)
+        if (pushName) await contacts.set(sender, pushName)
 
         // verifica se é reply com localização a um pedido pendente
         const quotedId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId
           || msg.message?.locationMessage?.contextInfo?.stanzaId
-        const pendingReq = (location && quotedId) ? pending.get(quotedId) : null
+        const pendingReq = (location && quotedId) ? await pending.get(quotedId) : null
         if (pendingReq && pendingReq.sender !== sender) {
-          // ignora localização de outro utilizador
           continue
         }
         if (pendingReq) {
-          pending.del(quotedId)
+          await pending.del(quotedId)
 
           const { lat, lng } = { lat: location.degreesLatitude, lng: location.degreesLongitude }
-          log.info({ channel: from, group: contacts.getName(from), user: contacts.getName(sender) }, `localização recebida (${lat}, ${lng})`)
+          log.info({ channel: from, group: await contacts.getName(from), user: await contacts.getName(sender) }, `localização recebida (${lat}, ${lng})`)
 
           try {
             const gemini = require('./gemini')
@@ -310,20 +295,19 @@ async function start() {
           continue
         }
 
-        // ignora mensagens sem conteúdo
         if (!text && !hasMedia && !location) continue
 
-        // ignora respostas programáticas do bot (fromMe sem participant e sem pushName)
-        if (msg.key.fromMe && !msg.key.participant && !msg.pushName) continue
+        // ignore bot's own automated replies
+        if (msg.key.fromMe && !msg.key.participant) continue
 
-        const displayName = contacts.getName(sender)
+        const displayName = await contacts.getName(sender)
         const logContent = text || (hasMedia ? '(média)' : '')
-        log.info({ channel: from, group: contacts.getName(from), user: displayName }, logContent)
+        log.info({ channel: from, group: await contacts.getName(from), sender, user: displayName }, logContent)
 
         // comandos só em texto
         const parsed = text ? commands.parse(text) : null
         if (parsed) {
-          log.info({ channel: from, group: contacts.getName(from), user: displayName, command: parsed.command, alias: parsed.alias }, 'Comando recebido')
+          log.info({ channel: from, group: await contacts.getName(from), sender, user: displayName, command: parsed.command, alias: parsed.alias }, 'Comando recebido')
           const MINUTE = 60 * 1000
           const rl = config.rateLimit || {}
 
@@ -341,14 +325,212 @@ async function start() {
 
           const quoted = msg
 
+          // --- resumo command (premium only) ---
+          if (parsed.command === 'resumo') {
+            const isPremium = await settings.isPremium(from, sender)
+            if (!isPremium) {
+              await sock.sendMessage(from, { text: 'Essa funcionalidade é exclusiva para usuários premium. Entre em contato para fazer upgrade do seu plano.' }, { quoted: msg })
+              continue
+            }
+
+            // Extract URL from args or from quoted message
+            let rawUrl = parsed.args.find(a => a.match(/^https?:\/\//))
+            if (!rawUrl) {
+              const quotedText = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation
+                || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text
+                || ''
+              const urlMatch = quotedText.match(/https?:\/\/[^\s]+/)
+              if (urlMatch) rawUrl = urlMatch[0]
+            }
+            if (!rawUrl) {
+              await sock.sendMessage(from, { text: 'Uso: !resumo <link> ou responda a uma mensagem com link' }, { quoted: msg })
+              continue
+            }
+
+            // Validate URL safety: only allow article/text pages and YouTube
+            const BLOCKED_EXTENSIONS = /\.(exe|msi|bat|cmd|sh|ps1|dll|bin|iso|dmg|apk|ipa|jar|war|swf|flv|zip|rar|7z|tar|gz|bz2|js|ts|py|rb|php|asp|jsp|cgi|sql|csv|xml|json|pdf|doc|docx|xls|xlsx|ppt|pptx|mp3|mp4|avi|mov|mkv|wav|ogg|flac|jpg|jpeg|png|gif|bmp|svg|webp|tiff)(\?.*)?$/i
+            const ALLOWED_DOMAINS_YOUTUBE = /^(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)$/
+            try {
+              const parsedUrl = new URL(rawUrl)
+              const hostname = parsedUrl.hostname.toLowerCase()
+              const pathname = parsedUrl.pathname.toLowerCase()
+              const isYoutube = ALLOWED_DOMAINS_YOUTUBE.test(hostname)
+              const hasBlockedExt = BLOCKED_EXTENSIONS.test(pathname)
+
+              if (!isYoutube && hasBlockedExt) {
+                await sock.sendMessage(from, { text: 'Apenas links de artigos ou vídeos do YouTube são suportados.' }, { quoted: msg })
+                continue
+              }
+
+              if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+                await sock.sendMessage(from, { text: 'Apenas links HTTP/HTTPS são suportados.' }, { quoted: msg })
+                continue
+              }
+
+              // Block localhost, private IPs, internal networks
+              if (hostname === 'localhost' || hostname.match(/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/)) {
+                await sock.sendMessage(from, { text: 'Link inválido.' }, { quoted: msg })
+                continue
+              }
+            } catch {
+              await sock.sendMessage(from, { text: 'Link inválido.' }, { quoted: msg })
+              continue
+            }
+
+            // Canonical URL: remove tracking params, fragment, normalize
+            const crypto = require('crypto')
+            const TRACKING_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'ref', 'source']
+            let canonical
+            try {
+              const u = new URL(rawUrl)
+              TRACKING_PARAMS.forEach(p => u.searchParams.delete(p))
+              u.hash = ''
+              canonical = u.toString().replace(/\/+$/, '')
+            } catch { canonical = rawUrl }
+            const urlHash = crypto.createHash('md5').update(canonical).digest('hex')
+
+            const sent = await sock.sendMessage(from, { text: LOADING_FRAMES[0] }, { quoted: msg })
+            const loadingTimer = startLoadingLoop(sock, from, sent.key)
+            const startTime = Date.now()
+
+            try {
+              const [cached] = await sql`SELECT summary FROM summaries WHERE url_hash = ${urlHash}`
+
+              let summary
+              if (cached) {
+                summary = cached.summary
+                log.info({ urlHash, canonical, sender, channel: from }, 'Resumo: cache hit')
+              } else {
+                const gemini = require('./gemini')
+                summary = await gemini.summarize(canonical)
+                const FAIL_PHRASES = ['não foi possível', 'não é suportado', 'not available', 'could not']
+                const isFail = !summary || FAIL_PHRASES.some(p => summary.toLowerCase().includes(p))
+                if (summary && !isFail) {
+                  await sql`INSERT INTO summaries (url_hash, canonical_url, summary) VALUES (${urlHash}, ${canonical}, ${summary}) ON CONFLICT DO NOTHING`
+                }
+              }
+
+              clearInterval(loadingTimer)
+              const elapsed = Date.now() - startTime
+              if (elapsed < LOADING_AFTER_COMPLETE) await new Promise(r => setTimeout(r, LOADING_AFTER_COMPLETE - elapsed))
+
+              await sock.sendMessage(from, { text: summary || 'Não foi possível resumir este artigo.', edit: sent.key })
+            } catch (err) {
+              clearInterval(loadingTimer)
+              log.error({ err }, 'Erro resumo')
+              await sock.sendMessage(from, { text: 'Erro ao resumir o artigo. Verifique se o link é válido e tente novamente.', edit: sent.key })
+            }
+            continue
+          }
+
+          // --- transcript command (needs access to msg) ---
+          if (parsed.command === 'transcript') {
+            const quotedMessage = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+            const audioMessage = quotedMessage?.audioMessage
+
+            if (!audioMessage) {
+              await sock.sendMessage(from, { text: 'Responda a uma mensagem de áudio com !transcript' }, { quoted: msg })
+              continue
+            }
+
+            // check audio duration before processing
+            const audioDuration = audioMessage.seconds || 0
+            const maxSeconds = await settings.getTranscriptMaxSeconds(from)
+            if (audioDuration > maxSeconds) {
+              await sock.sendMessage(from, {
+                text: `Este áudio tem ${audioDuration}s mas o limite atual é de ${maxSeconds}s. Para transcrever áudios maiores, faça upgrade do seu plano.`,
+              }, { quoted: msg })
+              continue
+            }
+
+            const sent = await sock.sendMessage(from, { text: LOADING_FRAMES[0] }, { quoted: msg })
+            const loadingTimer = startLoadingLoop(sock, from, sent.key)
+            const startTime = Date.now()
+
+            try {
+              const { downloadMediaMessage } = require('@whiskeysockets/baileys')
+              const crypto = require('crypto')
+              const gemini = require('./gemini')
+
+              const stanzaId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId
+              const quotedMsg = { message: quotedMessage, key: { ...msg.key, id: stanzaId } }
+
+              let buffer
+              try {
+                buffer = await downloadMediaMessage(quotedMsg, 'buffer', {})
+              } catch (dlErr) {
+                clearInterval(loadingTimer)
+                log.warn({ err: dlErr }, 'Transcript: áudio não disponível')
+                await sock.sendMessage(from, {
+                  text: 'Não foi possível acessar este áudio. Provavelmente já expirou.\n\nPeça para enviar o áudio novamente e faça !transcript no novo áudio.',
+                  edit: sent.key,
+                })
+                continue
+              }
+
+              const audioHash = crypto.createHash('md5').update(buffer).digest('hex')
+              const [cached] = await sql`SELECT transcription FROM transcripts WHERE audio_hash = ${audioHash}`
+
+              let transcription
+              if (cached) {
+                transcription = cached.transcription
+                log.info({ audioHash, sender, channel: from }, 'Transcript: cache hit')
+              } else {
+                // check daily limit before calling API
+                const dailyLimit = await settings.getTranscriptDailyLimit(from)
+                const usage = await settings.getTranscriptUsage(from, sender)
+                if (usage >= dailyLimit) {
+                  clearInterval(loadingTimer)
+                  await sock.sendMessage(from, {
+                    text: `Você atingiu o limite de ${dailyLimit} transcrições por dia. Para mais transcrições, faça upgrade do seu plano.`,
+                    edit: sent.key,
+                  })
+                  continue
+                }
+
+                const mimeType = audioMessage.mimetype || 'audio/ogg'
+                try {
+                  transcription = await gemini.transcribe(buffer, mimeType)
+                } catch (aiErr) {
+                  clearInterval(loadingTimer)
+                  log.error({ err: aiErr }, 'Transcript: erro Gemini')
+                  await sock.sendMessage(from, {
+                    text: 'Ocorreu um erro ao transcrever o áudio. Tente novamente mais tarde.',
+                    edit: sent.key,
+                  })
+                  continue
+                }
+
+                if (transcription) {
+                  await sql`INSERT INTO transcripts (audio_hash, transcription) VALUES (${audioHash}, ${transcription}) ON CONFLICT DO NOTHING`
+                  await settings.incrementTranscriptUsage(from, sender)
+                }
+              }
+
+              clearInterval(loadingTimer)
+              const elapsed = Date.now() - startTime
+              if (elapsed < LOADING_AFTER_COMPLETE) await new Promise(r => setTimeout(r, LOADING_AFTER_COMPLETE - elapsed))
+
+              const reply = transcription
+                ? transcription.split('\n').map(l => l.trim() ? `_${l}_` : '').join('\n')
+                : 'Não foi possível transcrever este áudio. O conteúdo pode não ser reconhecível.'
+              await sock.sendMessage(from, { text: reply, edit: sent.key })
+            } catch (err) {
+              clearInterval(loadingTimer)
+              log.error({ err }, 'Erro transcript')
+              await sock.sendMessage(from, { text: 'Ocorreu um erro inesperado. Tente novamente.', edit: sent.key })
+            }
+            continue
+          }
+
           try {
-            if (commands.isTroll(from)) {
+            if (await commands.isTroll(from)) {
               const reply = await commands.execute(from, sender, text)
               if (reply) await sock.sendMessage(from, { text: String(reply) }, { quoted })
               continue
             }
 
-            const slow = commands.isSlow(text, from)
+            const slow = await commands.isSlow(text, from)
             let loadingTimer = null
             let loadingKey = null
             let startTime = Date.now()
@@ -360,7 +542,7 @@ async function start() {
             }
 
             const reply = await commands.execute(from, sender, text)
-            log.info({ channel: from, command: parsed.command, hasReply: !!reply }, 'Comando executado')
+            log.info({ channel: from, group: await contacts.getName(from), sender, user: displayName, command: parsed.command, hasReply: !!reply }, 'Comando executado')
 
             if (slow) {
               clearInterval(loadingTimer)
@@ -369,7 +551,6 @@ async function start() {
             }
 
             if (reply?.privateMessage) {
-              // send to private chat + react on group message
               const senderJid = sender.includes('@lid') ? sender : sender.replace(/@.*/, '@s.whatsapp.net')
               await sock.sendMessage(senderJid, { text: reply.privateMessage })
               if (reply.groupReply) {
@@ -377,19 +558,19 @@ async function start() {
               }
             } else if (reply?.pendingLocation) {
               const sent = await sock.sendMessage(from, { text: `Boa! Envia a tua localização respondendo a esta mensagem para eu procurar "${reply.query}" perto de ti.` }, { quoted })
-              pending.save(sent.key.id, from, sender, 'food', reply.query)
+              await pending.save(sent.key.id, from, sender, 'food', reply.query)
             } else if (reply && loadingKey) {
               await sock.sendMessage(from, { text: String(reply), edit: loadingKey })
             } else if (reply) {
               await sock.sendMessage(from, { text: String(reply) }, { quoted })
             }
           } catch (err) {
-            log.error({ err, channel: from, command: parsed.command, user: displayName }, 'Erro ao executar comando')
+            log.error({ err, channel: from, group: await contacts.getName(from), sender, user: displayName, command: parsed.command }, 'Erro ao executar comando')
             try { await sock.sendMessage(from, { text: 'Ocorreu um erro ao processar o comando.' }, { quoted }) } catch (_) {}
           }
         } else {
           // contabiliza apenas mensagens normais (não comandos)
-          stats.track(from, sender)
+          await stats.track(from, sender, hasMedia ? ACTIVITY_TYPES.MEDIA_MESSAGE : ACTIVITY_TYPES.TEXT_MESSAGE, msg.key.id, msg.messageTimestamp)
         }
       }
     }
@@ -397,8 +578,18 @@ async function start() {
 }
 
 // limpa pedidos expirados a cada minuto
-setInterval(() => pending.purgeExpired(), 60 * 1000)
+setInterval(async () => {
+  try { await pending.purgeExpired() } catch (_) {}
+}, 60 * 1000)
 
 monitor.start()
 
-start()
+// bootstrap: run migrations then start
+init().then(async () => {
+  log.info('Migrations aplicadas, a iniciar bot...')
+  await contacts.loadLidCache()
+  start()
+}).catch(err => {
+  log.error({ err }, 'Falha ao inicializar base de dados')
+  process.exit(1)
+})

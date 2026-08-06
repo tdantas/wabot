@@ -1,7 +1,8 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '..', '.env') })
+
 const express = require('express')
 const path = require('path')
-const fs = require('fs')
-const Database = require('better-sqlite3')
+const postgres = require('postgres')
 const pino = require('pino')
 const jwt = require('jsonwebtoken')
 const cookieParser = require('cookie-parser')
@@ -13,27 +14,96 @@ const log = pino({
   timestamp: pino.stdTimeFunctions.isoTime,
 })
 
-const BOT_DIR = path.join(__dirname, '..', 'bot')
-const DB_PATH = process.env.DB_PATH || path.join(BOT_DIR, 'wabot.db')
-const CONFIG_PATH = path.join(BOT_DIR, 'config.json')
+const sql = postgres(process.env.DATABASE_URL || 'postgres://wabot:wabot@localhost:5432/wabot', {
+  max: 10,
+  idle_timeout: 20,
+  connect_timeout: 10,
+})
 
-const db = new Database(DB_PATH)
-db.pragma('journal_mode = WAL')
-db.pragma('busy_timeout = 5000')
+const TZ = process.env.TZ || 'Europe/Lisbon'
 
 const app = express()
 app.set('etag', false)
 const PORT = process.env.PORT || 3000
+const ASSET_VERSION = require('crypto').createHash('md5')
+  .update(require('fs').readdirSync(path.join(__dirname, 'public')).join(',') + Date.now())
+  .digest('hex').slice(0, 8)
+
 const staticOpts = {
   setHeaders(res, filePath) {
-    if (filePath.endsWith('.html')) {
-      res.set('Cache-Control', 'no-cache')
+    if (filePath.match(/\.(css|js)$/)) {
+      res.set('Cache-Control', 'public, max-age=31536000, immutable')
     }
+  }
+}
+
+// Cache-busting: serve HTML with versioned CSS/JS references
+const fs = require('fs')
+function versionedStatic(dir, opts) {
+  const staticMiddleware = express.static(dir, opts)
+  return (req, res, next) => {
+    const reqPath = req.path.endsWith('/') ? req.path + 'index.html' : req.path
+    if (reqPath.endsWith('.html')) {
+      const filePath = path.join(dir, reqPath)
+      if (fs.existsSync(filePath)) {
+        let html = fs.readFileSync(filePath, 'utf-8')
+        html = html.replace(/(href|src)="([^"]+\.(css|js))"/g, `$1="$2?v=${ASSET_VERSION}"`)
+        res.set('Cache-Control', 'no-cache')
+        return res.type('html').send(html)
+      }
+    }
+    staticMiddleware(req, res, next)
   }
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'wabot-live-' + require('crypto').randomBytes(16).toString('hex')
 
 app.use(cookieParser())
+
+// --- clean URL routing: /prefix/group/UUID/page ---
+const VALID_PAGES = ['group', 'calendar', 'charts', 'list', 'race', 'settings']
+const publicDir = path.join(__dirname, 'public')
+
+function serveGroupPage(prefix) {
+  return (req, res) => {
+    const page = req.params.page || 'group'
+    if (!VALID_PAGES.includes(page)) return res.status(404).send('Not found')
+    const filePath = path.join(publicDir, page + '.html')
+    if (!fs.existsSync(filePath)) return res.status(404).send('Not found')
+    let html = fs.readFileSync(filePath, 'utf-8')
+    // Prefix relative CSS/JS with absolute path + version hash (no <base> tag needed)
+    const base = prefix ? prefix + '/' : '/'
+    html = html.replace(/(href|src)="([^"/:][^"]*\.(css|js))"/g, `$1="${base}$2?v=${ASSET_VERSION}"`)
+    res.set('Cache-Control', 'no-cache')
+    res.type('html').send(html)
+  }
+}
+
+// Backward compatibility: redirect old ?id= URLs to clean paths
+app.use((req, res, next) => {
+  const id = req.query.id
+  if (!id) return next()
+  const match = req.path.match(/^(\/(?:admin|live))?\/(calendar|charts|list|race|group|settings)\.html$/)
+  if (match) {
+    const pfx = match[1] || ''
+    const page = match[2]
+    const extra = new URLSearchParams(req.query)
+    extra.delete('id')
+    const qs = extra.toString()
+    return res.redirect(301, `${pfx}/group/${encodeURIComponent(id)}/${page}${qs ? '?' + qs : ''}`)
+  }
+  next()
+})
+
+// Serve manifest.json and icons at all prefixes (needed for /live/ and /admin/ PWA)
+for (const prefix of ['', '/live', '/admin']) {
+  app.get(`${prefix}/manifest.json`, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'manifest.json'))
+  })
+  app.get(`${prefix}/images/:file`, (req, res, next) => {
+    const filePath = path.join(__dirname, 'public', 'images', req.params.file)
+    res.sendFile(filePath, (err) => { if (err) next() })
+  })
+}
 
 app.use((req, res, next) => {
   const start = Date.now()
@@ -43,23 +113,85 @@ app.use((req, res, next) => {
   next()
 })
 
+// --- helpers ---
+
+async function groupIdFromUuid(uuid) {
+  const [row] = await sql`SELECT group_id FROM group_settings WHERE uuid = ${uuid}`
+  return row?.group_id || null
+}
+
+async function uuidFromGroupId(groupId) {
+  const [row] = await sql`SELECT uuid FROM group_settings WHERE group_id = ${groupId}`
+  return row?.uuid || null
+}
+
+async function getName(jid) {
+  const [row] = await sql`SELECT name FROM contacts WHERE jid = ${jid}`
+  return row?.name || jid.replace(/@(s\.whatsapp\.net|lid|g\.us)$/, '')
+}
+
+async function getNames(jids) {
+  if (jids.length === 0) return new Map()
+  const rows = await sql`SELECT jid, name FROM contacts WHERE jid = ANY(${jids})`
+  const map = new Map(rows.map(r => [r.jid, r.name]))
+  for (const jid of jids) {
+    if (!map.has(jid)) map.set(jid, jid.replace(/@(s\.whatsapp\.net|lid|g\.us)$/, ''))
+  }
+  return map
+}
+
+async function getRanking(groupId, start, end, limit = 10) {
+  const rows = await sql`
+    SELECT sender, COUNT(*)::int as count FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+      AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+    GROUP BY sender ORDER BY count DESC
+    LIMIT ${limit}
+  `
+  const nameMap = await getNames([groupId, ...rows.map(r => r.sender)])
+  return {
+    groupName: nameMap.get(groupId),
+    rows: rows.map(r => ({
+      sender: r.sender,
+      name: nameMap.get(r.sender),
+      count: r.count,
+    })),
+  }
+}
+
+async function getUuids(groupIds) {
+  if (groupIds.length === 0) return new Map()
+  const rows = await sql`SELECT group_id, uuid FROM group_settings WHERE group_id = ANY(${groupIds})`
+  return new Map(rows.map(r => [r.group_id, r.uuid]))
+}
+
+async function resolveGroup(req, res) {
+  if (res?.locals?.forceGroupId) return res.locals.forceGroupId
+  const g = req.query.group
+  if (g && g.includes('-') && !g.includes('@')) {
+    return await groupIdFromUuid(g) || g
+  }
+  return g
+}
+
 // --- auth: token → JWT cookie ---
-app.get('/auth/:token', (req, res) => {
+app.get('/auth/:token', async (req, res) => {
   try {
     const { token } = req.params
-    const row = db.prepare('SELECT group_id, expires_at FROM live_tokens WHERE token = ?').get(token)
+    const [row] = await sql`SELECT group_id, expires_at FROM live_tokens WHERE token = ${token}`
 
     if (!row) {
       return res.status(401).send(expiredPage('Este link já foi utilizado ou não existe. Peça um novo com <b> !live </b> no grupo.'))
     }
 
     if (new Date(row.expires_at) < new Date()) {
-      db.prepare('DELETE FROM live_tokens WHERE token = ?').run(token)
+      await sql`DELETE FROM live_tokens WHERE token = ${token}`
       return res.status(401).send(expiredPage('Este link expirou. Peça um novo com !live no grupo.'))
     }
 
     // single use: delete token immediately
-    db.prepare('DELETE FROM live_tokens WHERE token = ?').run(token)
+    await sql`DELETE FROM live_tokens WHERE token = ${token}`
 
     const payload = { groupId: row.group_id }
     const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1d' })
@@ -70,18 +202,17 @@ app.get('/auth/:token', (req, res) => {
       sameSite: 'lax',
     })
 
-    let groupUuid = uuidFromGroupId(row.group_id)
+    let groupUuid = await uuidFromGroupId(row.group_id)
     if (!groupUuid) {
-      // generate UUID on the fly if missing
       const newUuid = uuidv4()
       try {
-        db.prepare('UPDATE group_settings SET uuid = ? WHERE group_id = ?').run(newUuid, row.group_id)
+        await sql`UPDATE group_settings SET uuid = ${newUuid} WHERE group_id = ${row.group_id}`
         groupUuid = newUuid
       } catch (e) {
         log.error({ err: e, groupId: row.group_id }, 'Failed to generate UUID on auth')
       }
     }
-    res.redirect(`/live/group.html?id=${encodeURIComponent(groupUuid || row.group_id)}`)
+    res.redirect(`/live/group/${encodeURIComponent(groupUuid || row.group_id)}/calendar`)
   } catch (err) {
     log.error({ err }, 'Erro /auth/:token')
     res.status(500).send('Erro interno')
@@ -102,7 +233,7 @@ function expiredPage(message) {
 </body></html>`
 }
 
-// --- live middleware: validates JWT, restricts to group ---
+// --- live middleware ---
 function liveAuth(req, res, next) {
   const token = req.cookies?.wabot_live
   if (!token) {
@@ -118,13 +249,11 @@ function liveAuth(req, res, next) {
   }
 }
 
-// --- live API middleware: validates JWT and restricts group param ---
 function liveApiAuth(req, res, next) {
   const token = req.cookies?.wabot_live
   if (!token) return res.status(401).json({ error: 'unauthorized' })
   try {
     const payload = jwt.verify(token, JWT_SECRET)
-    // store real group_id for resolveGroup to use
     res.locals.forceGroupId = payload.groupId
     next()
   } catch (err) {
@@ -132,125 +261,50 @@ function liveApiAuth(req, res, next) {
   }
 }
 
-// --- serve live pages (protected, same files as public) ---
-app.use('/live', liveAuth, express.static(path.join(__dirname, 'public'), staticOpts))
+app.get('/live/group/:uuid', liveAuth, serveGroupPage('/live'))
+app.get('/live/group/:uuid/:page', liveAuth, serveGroupPage('/live'))
+app.use('/live', liveAuth, versionedStatic(path.join(__dirname, 'public'), staticOpts))
 
-// --- group UUID: ensure column exists and generate for groups that don't have one ---
-try {
-  // ensure uuid column exists (in case bot migrations haven't run yet)
-  const cols = db.prepare("PRAGMA table_info(group_settings)").all().map(c => c.name)
-  if (!cols.includes('uuid')) {
-    db.exec("ALTER TABLE group_settings ADD COLUMN uuid TEXT")
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_settings_uuid ON group_settings (uuid)")
-    log.info('Created uuid column on group_settings')
-  }
-
-  const groups = db.prepare("SELECT group_id FROM group_settings WHERE uuid IS NULL").all()
-  if (groups.length > 0) {
-    const stmt = db.prepare("UPDATE group_settings SET uuid = ? WHERE group_id = ?")
-    for (const g of groups) {
-      stmt.run(uuidv4(), g.group_id)
-    }
-    log.info({ count: groups.length }, 'Generated UUIDs for groups')
-  }
-} catch (err) {
-  log.warn({ err: err.message }, 'UUID generation failed')
-}
-
-function groupIdFromUuid(uuid) {
+// --- group UUID: generate for groups that don't have one ---
+;(async () => {
   try {
-    const row = db.prepare('SELECT group_id FROM group_settings WHERE uuid = ?').get(uuid)
-    return row?.group_id || null
-  } catch { return null }
-}
-
-function uuidFromGroupId(groupId) {
-  try {
-    const row = db.prepare('SELECT uuid FROM group_settings WHERE group_id = ?').get(groupId)
-    return row?.uuid || null
-  } catch { return null }
-}
-
-const TZ = process.env.TZ || 'Europe/Lisbon'
-
-function todayStr() {
-  return new Date().toLocaleString('en-CA', { timeZone: TZ, hour12: false }).split(', ')[0]
-}
-
-function daysAgo(n) {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toLocaleString('en-CA', { timeZone: TZ, hour12: false }).split(', ')[0]
-}
-
-function weekSunday() {
-  const d = new Date()
-  const localDate = new Date(d.toLocaleString('en-US', { timeZone: TZ }))
-  const day = localDate.getDay()
-  localDate.setDate(localDate.getDate() - day)
-  return localDate.toLocaleString('en-CA', { timeZone: TZ, hour12: false }).split(', ')[0]
-}
-
-// lazy statements — tabela pode não existir se bot ainda não correu migrations
-let _queryRange, _queryContact, _queryDaily, _queryUserDaily
-
-function stmts() {
-  if (!_queryRange) {
-    _queryRange = db.prepare(`
-      SELECT sender, SUM(count) as count FROM daily_stats
-      WHERE group_id = ? AND date >= ? AND date <= ?
-      GROUP BY sender ORDER BY count DESC
-      LIMIT 10
-    `)
-    _queryContact = db.prepare('SELECT name FROM contacts WHERE jid = ?')
-    _queryDaily = db.prepare(`
-      SELECT date, day_of_week, period, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ? AND date <= ?
-      GROUP BY date, period ORDER BY date, period
-    `)
-    _queryUserDaily = db.prepare(`
-      SELECT date, day_of_week, period, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND sender = ? AND date >= ? AND date <= ?
-      GROUP BY date, period ORDER BY date, period
-    `)
-  }
-  return { queryRange: _queryRange, queryContact: _queryContact, queryDaily: _queryDaily, queryUserDaily: _queryUserDaily }
-}
-
-function getName(jid) {
-  const row = stmts().queryContact.get(jid)
-  return row?.name || jid.replace(/@s\.whatsapp\.net$/, '')
-}
-
-// --- admin: seed on startup if env is set ---
-if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS admins (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    )`)
-    const exists = db.prepare('SELECT id FROM admins WHERE email = ?').get(process.env.ADMIN_EMAIL)
-    if (!exists) {
-      const hash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
-      db.prepare('INSERT INTO admins (email, password_hash) VALUES (?, ?)').run(process.env.ADMIN_EMAIL, hash)
-      log.info({ email: process.env.ADMIN_EMAIL }, 'Admin user created')
+    const groups = await sql`SELECT group_id FROM group_settings WHERE uuid IS NULL`
+    if (groups.length > 0) {
+      for (const g of groups) {
+        await sql`UPDATE group_settings SET uuid = ${uuidv4()} WHERE group_id = ${g.group_id}`
+      }
+      log.info({ count: groups.length }, 'Generated UUIDs for groups')
     }
   } catch (err) {
-    log.error({ err }, 'Failed to seed admin')
+    log.warn({ err: err.message }, 'UUID generation failed')
   }
-}
+})()
 
-// --- admin login page ---
+// --- admin: seed on startup ---
+;(async () => {
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    try {
+      const [exists] = await sql`SELECT id FROM admins WHERE email = ${process.env.ADMIN_EMAIL}`
+      if (!exists) {
+        const hash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
+        await sql`INSERT INTO admins (email, password_hash) VALUES (${process.env.ADMIN_EMAIL}, ${hash})`
+        log.info({ email: process.env.ADMIN_EMAIL }, 'Admin user created')
+      }
+    } catch (err) {
+      log.error({ err }, 'Failed to seed admin')
+    }
+  }
+})()
+
+// --- admin login ---
 app.get('/admin/login', (req, res) => {
   res.send(adminLoginPage())
 })
 
-app.post('/admin/login', express.urlencoded({ extended: false }), (req, res) => {
+app.post('/admin/login', express.urlencoded({ extended: false }), async (req, res) => {
   try {
     const { email, password } = req.body
-    const admin = db.prepare('SELECT id, email, password_hash FROM admins WHERE email = ?').get(email)
+    const [admin] = await sql`SELECT id, email, password_hash FROM admins WHERE email = ${email}`
 
     if (!admin || !bcrypt.compareSync(password, admin.password_hash)) {
       return res.send(adminLoginPage('Email ou password incorretos.'))
@@ -319,14 +373,25 @@ function adminAuth(req, res, next) {
   }
 }
 
-// --- admin pages (groups listing, full access) ---
+app.get('/admin/groups', adminAuth, (req, res) => {
+  let html = fs.readFileSync(path.join(publicDir, 'groups.html'), 'utf-8')
+  html = html.replace(/(href|src)="([^"/:][^"]*\.(css|js))"/g, `$1="/admin/$2?v=${ASSET_VERSION}"`)
+  res.set('Cache-Control', 'no-cache')
+  res.type('html').send(html)
+})
+app.get('/admin/settings', adminAuth, (req, res) => {
+  let html = fs.readFileSync(path.join(publicDir, 'settings.html'), 'utf-8')
+  html = html.replace(/(href|src)="([^"/:][^"]*\.(css|js))"/g, `$1="/admin/$2?v=${ASSET_VERSION}"`)
+  res.set('Cache-Control', 'no-cache')
+  res.type('html').send(html)
+})
+app.get('/admin/group/:uuid', adminAuth, serveGroupPage('/admin'))
+app.get('/admin/group/:uuid/:page', adminAuth, serveGroupPage('/admin'))
 app.use('/admin', adminAuth, (req, res, next) => {
-  // serve same static files but admin has full access
-  if (req.path === '/' || req.path === '') return res.redirect('/admin/groups.html')
+  if (req.path === '/' || req.path === '') return res.redirect('/admin/groups')
   next()
-}, express.static(path.join(__dirname, 'public'), staticOpts))
+}, versionedStatic(path.join(__dirname, 'public'), staticOpts))
 
-// --- admin API auth middleware ---
 function adminApiAuth(req, res, next) {
   const token = req.cookies?.wabot_admin
   if (!token) return res.status(401).json({ error: 'unauthorized' })
@@ -334,492 +399,710 @@ function adminApiAuth(req, res, next) {
 }
 
 // admin groups API
-app.get('/admin/api/groups', adminApiAuth, (req, res) => {
+app.get('/admin/api/groups', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
-    const groups = s.getGroups.all().filter(g => g.listening === 1).map(g => ({
-      id: uuidFromGroupId(g.group_id) || g.group_id,
+    const groups = await sql`
+      SELECT gs.group_id, gs.uuid, gs.listening, gs.troll_mode, c.name
+      FROM group_settings gs
+      LEFT JOIN contacts c ON c.jid = gs.group_id
+      WHERE gs.listening = TRUE
+      ORDER BY c.name ASC
+    `
+    const result = groups.map(g => ({
+      id: g.uuid || g.group_id,
       name: g.name || g.group_id.replace(/@g\.us$/, ''),
     }))
-    res.json(groups)
+    res.json(result)
   } catch (err) {
     log.error({ err }, 'Erro /admin/api/groups')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// --- protect direct access to group/charts/calendar/settings pages ---
-const PROTECTED_PAGES = ['/group.html', '/charts.html', '/calendar.html', '/settings.html', '/groups.html']
+// Public clean URLs (no auth)
+app.get('/group/:uuid', serveGroupPage(''))
+app.get('/group/:uuid/:page', serveGroupPage(''))
+
+// --- protect direct access ---
+const PROTECTED_PAGES = ['/list.html', '/charts.html', '/calendar.html', '/settings.html', '/groups.html']
 app.use((req, res, next) => {
-  if (PROTECTED_PAGES.includes(req.path)) {
-    return res.redirect('/')
-  }
+  if (PROTECTED_PAGES.includes(req.path)) return res.redirect('/')
   next()
 })
 
-app.use(express.static(path.join(__dirname, 'public'), staticOpts))
+app.use(versionedStatic(path.join(__dirname, 'public'), staticOpts))
 app.use(express.json())
 
-// --- lazy settings statements (direct DB, avoids requiring bot modules from server) ---
-let _stmtGetGroups, _stmtGetDisabled, _stmtUpsertGroup, _stmtUpdateListening,
-    _stmtUpdateTroll, _stmtInsertDisabled, _stmtDeleteDisabled, _stmtDeleteAllDisabled
-
-function settingsStmts() {
-  if (!_stmtGetGroups) {
-    _stmtGetGroups = db.prepare(`
-      SELECT gs.group_id, gs.listening, gs.troll_mode, c.name
+// --- public groups API ---
+app.get('/api/groups', async (req, res) => {
+  try {
+    const groups = await sql`
+      SELECT gs.group_id, gs.uuid, c.name
       FROM group_settings gs
       LEFT JOIN contacts c ON c.jid = gs.group_id
-      ORDER BY gs.listening DESC, c.name ASC
-    `)
-    _stmtGetDisabled = db.prepare('SELECT command FROM group_disabled_commands WHERE group_id = ?')
-    _stmtUpsertGroup = db.prepare('INSERT OR IGNORE INTO group_settings (group_id, listening, troll_mode) VALUES (?, 0, 0)')
-    _stmtUpdateListening = db.prepare('UPDATE group_settings SET listening = ? WHERE group_id = ?')
-    _stmtUpdateTroll = db.prepare('UPDATE group_settings SET troll_mode = ? WHERE group_id = ?')
-    _stmtInsertDisabled = db.prepare('INSERT OR IGNORE INTO group_disabled_commands (group_id, command) VALUES (?, ?)')
-    _stmtDeleteDisabled = db.prepare('DELETE FROM group_disabled_commands WHERE group_id = ? AND command = ?')
-    _stmtDeleteAllDisabled = db.prepare('DELETE FROM group_disabled_commands WHERE group_id = ?')
-  }
-  return {
-    getGroups: _stmtGetGroups, getDisabled: _stmtGetDisabled,
-    upsertGroup: _stmtUpsertGroup, updateListening: _stmtUpdateListening,
-    updateTroll: _stmtUpdateTroll, insertDisabled: _stmtInsertDisabled,
-    deleteDisabled: _stmtDeleteDisabled, deleteAllDisabled: _stmtDeleteAllDisabled,
-  }
-}
-
-function getCommands() {
-  try {
-    return db.prepare('SELECT name, description FROM commands ORDER BY name').all()
-  } catch (_) {
-    return []
-  }
-}
-
-app.get('/api/groups', (req, res) => {
-  try {
-    const s = settingsStmts()
-    const groups = s.getGroups.all().filter(g => g.listening === 1).map(g => ({
-      id: uuidFromGroupId(g.group_id) || g.group_id,
+      WHERE gs.listening = TRUE
+      ORDER BY c.name ASC
+    `
+    const result = groups.map(g => ({
+      id: g.uuid || g.group_id,
       name: g.name || g.group_id.replace(/@g\.us$/, ''),
     }))
-    res.json(groups)
+    res.json(result)
   } catch (err) {
     log.error({ err }, 'Erro /api/groups')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// --- config API ---
-
+// --- config API (admin only) ---
 const GLOBAL_ID = '__global__'
 
-app.get('/api/config/groups', (req, res) => {
+app.get('/api/config/groups', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
-    const globalDisabled = s.getDisabled.all(GLOBAL_ID).map(r => r.command)
-    const groups = s.getGroups.all().map(g => ({
+    const [globalDisabledRows, groups, allDisabled, allMeta, cmds] = await Promise.all([
+      sql`SELECT command FROM group_disabled_commands WHERE group_id = ${GLOBAL_ID}`,
+      sql`SELECT gs.group_id, gs.uuid, gs.listening, gs.troll_mode, c.name
+          FROM group_settings gs LEFT JOIN contacts c ON c.jid = gs.group_id
+          ORDER BY gs.listening DESC, c.name ASC`,
+      sql`SELECT group_id, command FROM group_disabled_commands WHERE group_id != ${GLOBAL_ID}`,
+      sql`SELECT group_id, transcript_daily_limit, transcript_max_seconds FROM group_metadata`,
+      sql`SELECT name, description FROM commands ORDER BY name`,
+    ])
+
+    const globalDisabled = globalDisabledRows.map(r => r.command)
+    const disabledMap = new Map()
+    for (const r of allDisabled) {
+      if (!disabledMap.has(r.group_id)) disabledMap.set(r.group_id, [])
+      disabledMap.get(r.group_id).push(r.command)
+    }
+    const metaMap = new Map(allMeta.map(r => [r.group_id, r]))
+
+    const result = groups.map(g => ({
       id: g.group_id,
+      uuid: g.uuid || g.group_id,
       name: g.name || g.group_id.replace(/@g\.us$/, ''),
-      listening: g.listening === 1,
-      troll_mode: g.troll_mode === 1,
-      disabled_commands: s.getDisabled.all(g.group_id).map(r => r.command),
+      listening: g.listening,
+      troll_mode: g.troll_mode,
+      disabled_commands: disabledMap.get(g.group_id) || [],
+      transcript_daily_limit: metaMap.get(g.group_id)?.transcript_daily_limit ?? 2,
+      transcript_max_seconds: metaMap.get(g.group_id)?.transcript_max_seconds ?? 30,
     }))
-    res.json({ groups, commands: getCommands(), global_disabled: globalDisabled })
+    res.json({ groups: result, commands: cmds, global_disabled: globalDisabled })
   } catch (err) {
     log.error({ err }, 'Erro /api/config/groups')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-app.put('/api/config/groups/:id/listening', (req, res) => {
+app.put('/api/config/groups/:id/listening', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
     const groupId = req.params.id
     const { enabled } = req.body
-    s.upsertGroup.run(groupId)
-    s.updateListening.run(enabled ? 1 : 0, groupId)
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' })
+    await sql`INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (${groupId}, FALSE, FALSE) ON CONFLICT DO NOTHING`
+    await sql`UPDATE group_settings SET listening = ${!!enabled} WHERE group_id = ${groupId}`
+
+    // sync per-group defaults from global
+    if (enabled) {
+      await sql`DELETE FROM group_disabled_commands WHERE group_id = ${groupId}`
+      await sql`
+        INSERT INTO group_disabled_commands (group_id, command)
+        SELECT ${groupId}, command FROM group_disabled_commands WHERE group_id = ${GLOBAL_ID}
+      `
+      // copy global premium users as group defaults
+      await sql`
+        INSERT INTO premium_users (group_id, sender)
+        SELECT ${groupId}, sender FROM global_premium_users
+        ON CONFLICT DO NOTHING
+      `
+    }
+
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT listening')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-app.put('/api/config/groups/:id/troll', (req, res) => {
+app.put('/api/config/groups/:id/troll', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
     const groupId = req.params.id
     const { enabled } = req.body
-    s.upsertGroup.run(groupId)
-    s.updateTroll.run(enabled ? 1 : 0, groupId)
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' })
+    await sql`INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (${groupId}, FALSE, FALSE) ON CONFLICT DO NOTHING`
+    await sql`UPDATE group_settings SET troll_mode = ${!!enabled} WHERE group_id = ${groupId}`
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT troll')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-app.put('/api/config/global/commands/:cmd', (req, res) => {
+app.put('/api/config/global/commands/:cmd', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
     const cmd = req.params.cmd
     const { disabled } = req.body
+    if (typeof disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be boolean' })
+    const [cmdExists] = await sql`SELECT 1 FROM commands WHERE name = ${cmd}`
+    if (!cmdExists) return res.status(400).json({ error: 'command not found' })
 
-    // update global state
     if (disabled) {
-      s.insertDisabled.run(GLOBAL_ID, cmd)
+      await sql`INSERT INTO group_disabled_commands (group_id, command) VALUES (${GLOBAL_ID}, ${cmd}) ON CONFLICT DO NOTHING`
     } else {
-      s.deleteDisabled.run(GLOBAL_ID, cmd)
+      await sql`DELETE FROM group_disabled_commands WHERE group_id = ${GLOBAL_ID} AND command = ${cmd}`
     }
 
-    // apply to all groups
-    const groups = s.getGroups.all()
+    const groups = await sql`SELECT group_id FROM group_settings`
     for (const g of groups) {
       if (disabled) {
-        s.insertDisabled.run(g.group_id, cmd)
+        await sql`INSERT INTO group_disabled_commands (group_id, command) VALUES (${g.group_id}, ${cmd}) ON CONFLICT DO NOTHING`
       } else {
-        s.deleteDisabled.run(g.group_id, cmd)
+        await sql`DELETE FROM group_disabled_commands WHERE group_id = ${g.group_id} AND command = ${cmd}`
       }
     }
 
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT global command')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-app.put('/api/config/groups/:id/commands/:cmd', (req, res) => {
+app.put('/api/config/groups/:id/commands/:cmd', adminApiAuth, async (req, res) => {
   try {
-    const s = settingsStmts()
     const { id: groupId, cmd } = req.params
     const { disabled } = req.body
+    if (typeof disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be boolean' })
     if (disabled) {
-      s.insertDisabled.run(groupId, cmd)
+      await sql`INSERT INTO group_disabled_commands (group_id, command) VALUES (${groupId}, ${cmd}) ON CONFLICT DO NOTHING`
     } else {
-      s.deleteDisabled.run(groupId, cmd)
+      await sql`DELETE FROM group_disabled_commands WHERE group_id = ${groupId} AND command = ${cmd}`
     }
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT command')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-app.get('/api/config/metrics', (req, res) => {
+app.put('/api/config/groups/:id/transcript-limit', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const limit = parseInt(req.body.limit)
+    if (isNaN(limit) || limit < 0 || limit > 1000) return res.status(400).json({ error: 'limit must be 0-1000' })
+    await sql`
+      INSERT INTO group_metadata (group_id, transcript_daily_limit) VALUES (${groupId}, ${limit})
+      ON CONFLICT (group_id) DO UPDATE SET transcript_daily_limit = EXCLUDED.transcript_daily_limit
+    `
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT transcript-limit')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.put('/api/config/groups/:id/transcript-max-seconds', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const seconds = parseInt(req.body.seconds)
+    if (isNaN(seconds) || seconds < 1 || seconds > 3600) return res.status(400).json({ error: 'seconds must be 1-3600' })
+    await sql`
+      INSERT INTO group_metadata (group_id, transcript_max_seconds) VALUES (${groupId}, ${seconds})
+      ON CONFLICT (group_id) DO UPDATE SET transcript_max_seconds = EXCLUDED.transcript_max_seconds
+    `
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT transcript-max-seconds')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.get('/api/config/groups/:id/premium-users', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const rows = await sql`SELECT pu.sender, c.name FROM premium_users pu LEFT JOIN contacts c ON c.jid = pu.sender WHERE pu.group_id = ${groupId}`
+    res.json(rows.map(r => ({ sender: r.sender, name: r.name || r.sender })))
+  } catch (err) {
+    log.error({ err }, 'Erro GET premium-users')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.get('/api/config/global/premium-users', adminApiAuth, async (req, res) => {
+  try {
+    const rows = await sql`SELECT gu.sender, c.name FROM global_premium_users gu LEFT JOIN contacts c ON c.jid = gu.sender`
+    res.json(rows.map(r => ({ sender: r.sender, name: r.name || r.sender })))
+  } catch (err) {
+    log.error({ err }, 'Erro GET global premium-users')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.post('/api/config/global/premium-users', adminApiAuth, async (req, res) => {
+  try {
+    const { sender } = req.body
+    if (!sender || typeof sender !== 'string') return res.status(400).json({ error: 'sender required' })
+    await sql`INSERT INTO global_premium_users (sender) VALUES (${sender}) ON CONFLICT DO NOTHING`
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro POST global premium-user')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.delete('/api/config/global/premium-users/:sender', adminApiAuth, async (req, res) => {
+  try {
+    await sql`DELETE FROM global_premium_users WHERE sender = ${decodeURIComponent(req.params.sender)}`
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro DELETE global premium-user')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.post('/api/config/groups/:id/premium-users', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const { sender } = req.body
+    if (!sender || typeof sender !== 'string') return res.status(400).json({ error: 'sender required' })
+    await sql`INSERT INTO premium_users (group_id, sender) VALUES (${groupId}, ${sender}) ON CONFLICT DO NOTHING`
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro POST premium-user')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.delete('/api/config/groups/:id/premium-users/:sender', adminApiAuth, async (req, res) => {
+  try {
+    const { id: groupId, sender } = req.params
+    await sql`DELETE FROM premium_users WHERE group_id = ${groupId} AND sender = ${decodeURIComponent(sender)}`
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro DELETE premium-user')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.get('/api/config/contacts', adminApiAuth, async (req, res) => {
+  try {
+    const rows = await sql`SELECT jid, name FROM contacts WHERE type = 'person' ORDER BY name ASC`
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro GET contacts')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.get('/api/config/metrics', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store')
-    const row = db.prepare("SELECT value, updated_at FROM bot_metrics WHERE key = 'bot_metrics'").get()
+    const [row] = await sql`SELECT value, updated_at FROM bot_metrics WHERE key = 'bot_metrics'`
     if (!row) return res.json(null)
     res.json({ ...JSON.parse(row.value), updated_at: row.updated_at })
   } catch (err) {
     log.error({ err }, 'Erro /api/config/metrics')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// --- stats router (shared between /api and /live/api) ---
+// --- stats router (shared between /api, /live/api, /admin/api) ---
 const statsRouter = express.Router()
 
-// resolve UUID → group_id (Express 5: req.query is a getter, can't mutate)
-function resolveGroup(req, res) {
-  // live mode: forced group from JWT
-  if (res?.locals?.forceGroupId) return res.locals.forceGroupId
-  const g = req.query.group
-  if (g && g.includes('-') && !g.includes('@')) {
-    return groupIdFromUuid(g) || g
-  }
-  return g
-}
-
-statsRouter.get('/', (req, res) => {
+statsRouter.get('/', async (req, res) => {
   try {
-    const { queryRange } = stmts()
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
 
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
-
-    const rows = queryRange.all(groupId, start, end)
-      .map((r) => ({ name: getName(r.sender), sender: r.sender, count: r.count }))
-
-    res.json({ name: getName(groupId), rows })
+    const { groupName, rows } = await getRanking(groupId, req.query.start, req.query.end)
+    res.json({ name: groupName, rows })
   } catch (err) {
     log.error({ err }, 'Erro /api/stats')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-statsRouter.get('/daily', (req, res) => {
+statsRouter.get('/daily', async (req, res) => {
   try {
-    const { queryDaily } = stmts()
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
 
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
 
-    const rows = queryDaily.all(groupId, start, end)
+    const rows = await sql`
+      SELECT created_at::date as date,
+             EXTRACT(DOW FROM created_at)::int as day_of_week,
+             CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+             COUNT(*)::int as total
+      FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+        AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY created_at::date, day_of_week, period ORDER BY date, period
+    `
+
     res.json(rows)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/daily')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-statsRouter.get('/user-daily', (req, res) => {
+statsRouter.get('/user-daily', async (req, res) => {
   try {
-    const { queryUserDaily } = stmts()
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
 
     const sender = req.query.sender
     if (!sender) return res.status(400).json({ error: 'sender required' })
 
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
 
-    const rows = queryUserDaily.all(groupId, sender, start, end)
-    res.json(rows.map((r) => ({ ...r, name: getName(sender) })))
+    const rows = await sql`
+      SELECT created_at::date as date,
+             EXTRACT(DOW FROM created_at)::int as day_of_week,
+             CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+             COUNT(*)::int as total
+      FROM events
+      WHERE group_id = ${groupId} AND sender = ${sender}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+        AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY created_at::date, day_of_week, period ORDER BY date, period
+    `
+
+    const name = await getName(sender)
+    res.json(rows.map(r => ({ ...r, name })))
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/user-daily')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// top 5 users broken down by date (for charts)
-statsRouter.get('/top-users-daily', (req, res) => {
+statsRouter.get('/top-users-daily', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
 
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
 
-    // get top 5 senders in the range
-    const top5 = db.prepare(`
-      SELECT sender, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ? AND date <= ?
+    const top5 = await sql`
+      SELECT sender, COUNT(*)::int as total FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+        AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
       GROUP BY sender ORDER BY total DESC LIMIT 5
-    `).all(groupId, start, end)
+    `
 
-    // get daily breakdown for each
-    const daily = db.prepare(`
-      SELECT sender, date, day_of_week, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND sender = ? AND date >= ? AND date <= ?
-      GROUP BY date ORDER BY date
-    `)
+    const senderIds = top5.map(u => u.sender)
+    const [nameMap, allDays] = await Promise.all([
+      getNames([groupId, ...senderIds]),
+      sql`SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, sender, COUNT(*)::int as total
+          FROM events
+          WHERE group_id = ${groupId} AND sender = ANY(${senderIds})
+            AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          GROUP BY created_at::date, day_of_week, sender ORDER BY date`,
+    ])
+
+    const daysBySender = new Map()
+    for (const r of allDays) {
+      if (!daysBySender.has(r.sender)) daysBySender.set(r.sender, [])
+      daysBySender.get(r.sender).push(r)
+    }
 
     const users = top5.map(u => ({
       sender: u.sender,
-      name: getName(u.sender),
+      name: nameMap.get(u.sender),
       total: u.total,
-      days: daily.all(groupId, u.sender, start, end),
+      days: daysBySender.get(u.sender) || [],
     }))
 
-    res.json({ name: getName(groupId), users })
+    res.json({ name: nameMap.get(groupId), users })
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/top-users-daily')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// aggregated by day of week
-statsRouter.get('/by-weekday', (req, res) => {
+statsRouter.get('/by-weekday', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
 
     let rows
     if (senders) {
-      const placeholders = senders.map(() => '?').join(',')
-      rows = db.prepare(`
-        SELECT day_of_week, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ? AND sender IN (${placeholders})
+      rows = await sql`
+        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          AND sender = ANY(${senders})
         GROUP BY day_of_week ORDER BY day_of_week
-      `).all(groupId, start, end, ...senders)
+      `
     } else {
-      rows = db.prepare(`
-        SELECT day_of_week, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ?
+      rows = await sql`
+        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
         GROUP BY day_of_week ORDER BY day_of_week
-      `).all(groupId, start, end)
+      `
     }
 
     res.json(rows)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/by-weekday')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// period distribution (manha vs noite)
-statsRouter.get('/by-period', (req, res) => {
+statsRouter.get('/by-period', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
 
     let rows
     if (senders) {
-      const placeholders = senders.map(() => '?').join(',')
-      rows = db.prepare(`
-        SELECT period, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ? AND sender IN (${placeholders})
+      rows = await sql`
+        SELECT CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+               COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          AND sender = ANY(${senders})
         GROUP BY period
-      `).all(groupId, start, end, ...senders)
+      `
     } else {
-      rows = db.prepare(`
-        SELECT period, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ?
+      rows = await sql`
+        SELECT CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+               COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
         GROUP BY period
-      `).all(groupId, start, end)
+      `
     }
 
     res.json(rows)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/by-period')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// top 5 users by day of week (radar)
-statsRouter.get('/users-weekday', (req, res) => {
+statsRouter.get('/users-weekday', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
 
-    const top5 = db.prepare(`
-      SELECT sender, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ? AND date <= ?
+    const top5 = await sql`
+      SELECT sender, COUNT(*)::int as total FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
       GROUP BY sender ORDER BY total DESC LIMIT 5
-    `).all(groupId, start, end)
+    `
 
-    const byWeekday = db.prepare(`
-      SELECT day_of_week, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND sender = ? AND date >= ? AND date <= ?
-      GROUP BY day_of_week ORDER BY day_of_week
-    `)
+    const senderIds = top5.map(u => u.sender)
+    const [nameMap, allWeekdays] = await Promise.all([
+      getNames(senderIds),
+      sql`SELECT sender, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+          WHERE group_id = ${groupId} AND sender = ANY(${senderIds})
+            AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          GROUP BY sender, day_of_week ORDER BY day_of_week`,
+    ])
 
     const users = top5.map(u => {
       const weekdays = Array(7).fill(0)
-      byWeekday.all(groupId, u.sender, start, end).forEach(r => { weekdays[r.day_of_week] = r.total })
-      return { sender: u.sender, name: getName(u.sender), weekdays }
+      allWeekdays.filter(r => r.sender === u.sender).forEach(r => { weekdays[r.day_of_week] = r.total })
+      return { sender: u.sender, name: nameMap.get(u.sender), weekdays }
     })
 
     res.json(users)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/users-weekday')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// daily total (group trend)
-statsRouter.get('/trend', (req, res) => {
+statsRouter.get('/trend', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
 
     let rows
     if (senders) {
-      const placeholders = senders.map(() => '?').join(',')
-      rows = db.prepare(`
-        SELECT date, day_of_week, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ? AND sender IN (${placeholders})
-        GROUP BY date ORDER BY date
-      `).all(groupId, start, end, ...senders)
+      rows = await sql`
+        SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          AND sender = ANY(${senders})
+        GROUP BY created_at::date, day_of_week ORDER BY date
+      `
     } else {
-      rows = db.prepare(`
-        SELECT date, day_of_week, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ?
-        GROUP BY date ORDER BY date
-      `).all(groupId, start, end)
+      rows = await sql`
+        SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY created_at::date, day_of_week ORDER BY date
+      `
     }
 
     res.json(rows)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/trend')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// period by day of week (manha vs noite per weekday)
-statsRouter.get('/period-weekday', (req, res) => {
+statsRouter.get('/period-weekday', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
 
     let rows
     if (senders) {
-      const placeholders = senders.map(() => '?').join(',')
-      rows = db.prepare(`
-        SELECT day_of_week, period, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ? AND sender IN (${placeholders})
+      rows = await sql`
+        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week,
+               CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+               COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          AND sender = ANY(${senders})
         GROUP BY day_of_week, period ORDER BY day_of_week
-      `).all(groupId, start, end, ...senders)
+      `
     } else {
-      rows = db.prepare(`
-        SELECT day_of_week, period, SUM(count) as total FROM daily_stats
-        WHERE group_id = ? AND date >= ? AND date <= ?
+      rows = await sql`
+        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week,
+               CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+               COUNT(*)::int as total FROM events
+        WHERE group_id = ${groupId}
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
         GROUP BY day_of_week, period ORDER BY day_of_week
-      `).all(groupId, start, end)
+      `
     }
 
     res.json(rows)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/period-weekday')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// top user per day (calendar view)
-statsRouter.get('/daily-winners', (req, res) => {
+statsRouter.get('/daily-winners', async (req, res) => {
   try {
-    const groupId = resolveGroup(req, res)
+    const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
-    const start = req.query.start || todayStr()
-    const end = req.query.end || todayStr()
+    const start = req.query.start || null
+    const end = req.query.end || null
 
-    const rows = db.prepare(`
-      SELECT date, day_of_week, sender, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ? AND date <= ?
-      GROUP BY date, sender ORDER BY date, total DESC
-    `).all(groupId, start, end)
+    const rows = await sql`
+      SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, sender, COUNT(*)::int as total
+      FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY created_at::date, day_of_week, sender ORDER BY date, total DESC
+    `
 
-    // group by date, pick winner (highest total)
     const byDate = new Map()
     for (const r of rows) {
-      if (!byDate.has(r.date)) {
-        byDate.set(r.date, { date: r.date, day_of_week: r.day_of_week, sender: r.sender, name: getName(r.sender), total: r.total })
+      const key = r.date.toISOString().slice(0, 10)
+      if (!byDate.has(key)) {
+        byDate.set(key, { date: key, day_of_week: r.day_of_week, sender: r.sender, total: r.total })
       }
     }
 
-    res.json(Array.from(byDate.values()))
+    const winnerSenders = [...new Set([...byDate.values()].map(w => w.sender))]
+    const nameMap = await getNames(winnerSenders)
+    const result = [...byDate.values()].map(w => ({ ...w, name: nameMap.get(w.sender) }))
+
+    res.json(result)
   } catch (err) {
     log.error({ err }, 'Erro /api/stats/daily-winners')
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'internal error' })
   }
 })
 
-// mount stats router on both paths
+statsRouter.get('/race', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const start = req.query.start || null
+    const end = req.query.end || null
+    const limit = parseInt(req.query.limit) || 15
+
+    // get top N senders in the full range
+    const topSenders = await sql`
+      SELECT sender, COUNT(*)::int as total FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY sender ORDER BY total DESC LIMIT ${limit}
+    `
+    const senderIds = topSenders.map(s => s.sender)
+
+    // get daily counts for those senders
+    const rows = await sql`
+      SELECT created_at::date as date, sender, COUNT(*)::int as total
+      FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        AND sender = ANY(${senderIds})
+      GROUP BY created_at::date, sender ORDER BY date
+    `
+
+    const nameMap = await getNames([groupId, ...senderIds])
+
+    res.json({ name: nameMap.get(groupId), senders: senderIds.map(s => ({ sender: s, name: nameMap.get(s) })), days: rows })
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/race')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// mount stats router on all paths
 app.use('/api/stats', statsRouter)
 app.use('/live/api/stats', liveApiAuth, statsRouter)
 app.use('/admin/api/stats', adminApiAuth, statsRouter)
+
+// --- widget API (API key auth) ---
+const WIDGET_API_KEY = process.env.WIDGET_API_KEY
+app.get('/api/widget', async (req, res) => {
+  if (!WIDGET_API_KEY) return res.status(503).json({ error: 'widget not configured' })
+  if (req.query.key !== WIDGET_API_KEY) return res.status(401).json({ error: 'invalid key' })
+
+  try {
+    const groupUuid = req.query.group
+    if (!groupUuid) return res.status(400).json({ error: 'group required' })
+
+    const groupId = await groupIdFromUuid(groupUuid)
+    if (!groupId) return res.status(404).json({ error: 'group not found' })
+
+    const today = new Date().toISOString().split('T')[0]
+    const start = req.query.start || today
+    const end = req.query.end || today
+
+    const { groupName, rows } = await getRanking(groupId, start, end)
+    res.json({
+      name: groupName,
+      period: { start, end },
+      rows: rows.map(({ name, count }) => ({ name, count })),
+    })
+  } catch (err) {
+    log.error({ err }, 'Erro /api/widget')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
 
 app.listen(PORT, '0.0.0.0', () => {
   log.info(`Dashboard: http://localhost:${PORT}`)

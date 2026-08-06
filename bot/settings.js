@@ -1,138 +1,182 @@
-const { open } = require('./db')
-
-let db
-
-function getDb() {
-  if (!db) db = open()
-  return db
-}
+const { sql } = require('./db')
 
 // --- groups ---
 
-function getGroups() {
-  return getDb().prepare(`
+async function getGroups() {
+  return sql`
     SELECT gs.group_id, gs.listening, gs.troll_mode, c.name
     FROM group_settings gs
     LEFT JOIN contacts c ON c.jid = gs.group_id
     ORDER BY gs.listening DESC, c.name ASC
-  `).all()
+  `
 }
 
-function getListeningGroupIds() {
-  return getDb().prepare(
-    'SELECT group_id FROM group_settings WHERE listening = 1'
-  ).all().map(r => r.group_id)
+async function getListeningGroupIds() {
+  const rows = await sql`SELECT group_id FROM group_settings WHERE listening = TRUE`
+  return rows.map(r => r.group_id)
 }
 
-function upsertGroup(groupId, fields) {
-  const current = getDb().prepare('SELECT * FROM group_settings WHERE group_id = ?').get(groupId)
+async function upsertGroup(groupId, fields) {
+  const [current] = await sql`SELECT * FROM group_settings WHERE group_id = ${groupId}`
   if (!current) {
-    getDb().prepare(
-      'INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (?, ?, ?)'
-    ).run(groupId, fields.listening ? 1 : 0, fields.troll_mode ? 1 : 0)
+    await sql`
+      INSERT INTO group_settings (group_id, listening, troll_mode)
+      VALUES (${groupId}, ${!!fields.listening}, ${!!fields.troll_mode})
+    `
   } else {
     if (fields.listening !== undefined) {
-      getDb().prepare('UPDATE group_settings SET listening = ? WHERE group_id = ?').run(fields.listening ? 1 : 0, groupId)
+      await sql`UPDATE group_settings SET listening = ${!!fields.listening} WHERE group_id = ${groupId}`
     }
     if (fields.troll_mode !== undefined) {
-      getDb().prepare('UPDATE group_settings SET troll_mode = ? WHERE group_id = ?').run(fields.troll_mode ? 1 : 0, groupId)
+      await sql`UPDATE group_settings SET troll_mode = ${!!fields.troll_mode} WHERE group_id = ${groupId}`
     }
   }
 }
 
-function ensureGroup(groupId) {
-  const d = getDb()
-  const existing = d.prepare('SELECT 1 FROM group_settings WHERE group_id = ?').get(groupId)
+async function ensureGroup(groupId) {
+  const [existing] = await sql`SELECT 1 FROM group_settings WHERE group_id = ${groupId}`
   if (existing) return
 
-  d.transaction(() => {
-    d.prepare('INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (?, 0, 0)').run(groupId)
-    // disable all commands by default
-    const cmds = d.prepare('SELECT name FROM commands').all()
-    const insert = d.prepare('INSERT OR IGNORE INTO group_disabled_commands (group_id, command) VALUES (?, ?)')
+  await sql.begin(async (tx) => {
+    await tx`INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (${groupId}, FALSE, FALSE)`
+    const cmds = await tx`SELECT name FROM commands`
     for (const cmd of cmds) {
-      insert.run(groupId, cmd.name)
+      await tx`INSERT INTO group_disabled_commands (group_id, command) VALUES (${groupId}, ${cmd.name}) ON CONFLICT DO NOTHING`
     }
-  })()
+  })
 }
 
 // --- troll mode ---
 
-function isTroll(groupId) {
-  const row = getDb().prepare('SELECT troll_mode FROM group_settings WHERE group_id = ?').get(groupId)
-  return row?.troll_mode === 1
+async function isTroll(groupId) {
+  const [row] = await sql`SELECT troll_mode FROM group_settings WHERE group_id = ${groupId}`
+  return row?.troll_mode === true
 }
 
 // --- disabled commands ---
 
-function getDisabledCommands(groupId) {
-  return getDb().prepare(
-    'SELECT command FROM group_disabled_commands WHERE group_id = ?'
-  ).all(groupId).map(r => r.command)
+async function getDisabledCommands(groupId) {
+  const rows = await sql`SELECT command FROM group_disabled_commands WHERE group_id = ${groupId}`
+  return rows.map(r => r.command)
 }
 
-function setCommandDisabled(groupId, command, disabled) {
+async function setCommandDisabled(groupId, command, disabled) {
   if (disabled) {
-    getDb().prepare(
-      'INSERT OR IGNORE INTO group_disabled_commands (group_id, command) VALUES (?, ?)'
-    ).run(groupId, command)
+    await sql`INSERT INTO group_disabled_commands (group_id, command) VALUES (${groupId}, ${command}) ON CONFLICT DO NOTHING`
   } else {
-    getDb().prepare(
-      'DELETE FROM group_disabled_commands WHERE group_id = ? AND command = ?'
-    ).run(groupId, command)
+    await sql`DELETE FROM group_disabled_commands WHERE group_id = ${groupId} AND command = ${command}`
   }
+}
+
+// --- transcript limits ---
+
+async function getTranscriptDailyLimit(groupId) {
+  const [row] = await sql`SELECT transcript_daily_limit FROM group_metadata WHERE group_id = ${groupId}`
+  return row?.transcript_daily_limit ?? 2
+}
+
+async function setTranscriptDailyLimit(groupId, limit) {
+  await sql`
+    INSERT INTO group_metadata (group_id, transcript_daily_limit) VALUES (${groupId}, ${limit})
+    ON CONFLICT (group_id) DO UPDATE SET transcript_daily_limit = EXCLUDED.transcript_daily_limit
+  `
+}
+
+async function getTranscriptMaxSeconds(groupId) {
+  const [row] = await sql`SELECT transcript_max_seconds FROM group_metadata WHERE group_id = ${groupId}`
+  return row?.transcript_max_seconds ?? 30
+}
+
+async function setTranscriptMaxSeconds(groupId, seconds) {
+  await sql`
+    INSERT INTO group_metadata (group_id, transcript_max_seconds) VALUES (${groupId}, ${seconds})
+    ON CONFLICT (group_id) DO UPDATE SET transcript_max_seconds = EXCLUDED.transcript_max_seconds
+  `
+}
+
+async function getTranscriptUsage(groupId, sender) {
+  const [row] = await sql`
+    SELECT count FROM transcript_usage
+    WHERE group_id = ${groupId} AND sender = ${sender} AND used_at = CURRENT_DATE
+  `
+  return row?.count ?? 0
+}
+
+async function incrementTranscriptUsage(groupId, sender) {
+  await sql`
+    INSERT INTO transcript_usage (group_id, sender, used_at, count)
+    VALUES (${groupId}, ${sender}, CURRENT_DATE, 1)
+    ON CONFLICT (group_id, sender, used_at) DO UPDATE SET count = transcript_usage.count + 1
+  `
 }
 
 // --- seed from config.json (one-time migration) ---
 
-function seedFromConfig(config) {
-  const count = getDb().prepare('SELECT COUNT(*) as n FROM group_settings').get().n
-  if (count > 0) return false
+async function seedFromConfig(config) {
+  const [{ n }] = await sql`SELECT COUNT(*)::int as n FROM group_settings`
+  if (n > 0) return false
 
-  const d = getDb()
-  d.transaction(() => {
+  await sql.begin(async (tx) => {
     for (const gid of (config.groups || [])) {
-      d.prepare(
-        'INSERT OR IGNORE INTO group_settings (group_id, listening, troll_mode) VALUES (?, 1, ?)'
-      ).run(gid, (config.trollMode || []).includes(gid) ? 1 : 0)
+      await tx`
+        INSERT INTO group_settings (group_id, listening, troll_mode)
+        VALUES (${gid}, TRUE, ${(config.trollMode || []).includes(gid)})
+        ON CONFLICT DO NOTHING
+      `
     }
 
-    // per-group disabled commands
     const groupDisabled = config.groupDisabledCommands || {}
     for (const [gid, cmds] of Object.entries(groupDisabled)) {
       for (const cmd of cmds) {
-        d.prepare(
-          'INSERT OR IGNORE INTO group_disabled_commands (group_id, command) VALUES (?, ?)'
-        ).run(gid, cmd)
+        await tx`INSERT INTO group_disabled_commands (group_id, command) VALUES (${gid}, ${cmd}) ON CONFLICT DO NOTHING`
       }
     }
 
-    // global disabled commands → apply to all groups
     const globalDisabled = config.disabledCommands || []
     if (globalDisabled.length > 0) {
       for (const gid of (config.groups || [])) {
         for (const cmd of globalDisabled) {
-          d.prepare(
-            'INSERT OR IGNORE INTO group_disabled_commands (group_id, command) VALUES (?, ?)'
-          ).run(gid, cmd)
+          await tx`INSERT INTO group_disabled_commands (group_id, command) VALUES (${gid}, ${cmd}) ON CONFLICT DO NOTHING`
         }
       }
     }
-  })()
+  })
 
   return true
 }
 
-function syncCommands(commandList) {
-  const d = getDb()
-  const upsert = d.prepare(
-    'INSERT INTO commands (name, description) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET description = excluded.description'
-  )
-  d.transaction(() => {
+// --- premium users ---
+
+async function isPremium(groupId, sender) {
+  const [global] = await sql`SELECT 1 FROM global_premium_users WHERE sender = ${sender}`
+  if (global) return true
+  const [group] = await sql`SELECT 1 FROM premium_users WHERE group_id = ${groupId} AND sender = ${sender}`
+  return !!group
+}
+
+async function getPremiumUsers(groupId) {
+  const globalRows = await sql`SELECT sender FROM global_premium_users`
+  const groupRows = await sql`SELECT sender FROM premium_users WHERE group_id = ${groupId}`
+  return { global: globalRows.map(r => r.sender), group: groupRows.map(r => r.sender) }
+}
+
+async function addPremiumUser(groupId, sender) {
+  await sql`INSERT INTO premium_users (group_id, sender) VALUES (${groupId}, ${sender}) ON CONFLICT DO NOTHING`
+}
+
+async function removePremiumUser(groupId, sender) {
+  await sql`DELETE FROM premium_users WHERE group_id = ${groupId} AND sender = ${sender}`
+}
+
+async function syncCommands(commandList) {
+  await sql.begin(async (tx) => {
     for (const cmd of commandList) {
-      upsert.run(cmd.name, cmd.description)
+      await tx`
+        INSERT INTO commands (name, description) VALUES (${cmd.name}, ${cmd.description})
+        ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+      `
     }
-  })()
+  })
 }
 
 module.exports = {
@@ -145,4 +189,14 @@ module.exports = {
   setCommandDisabled,
   seedFromConfig,
   syncCommands,
+  getTranscriptDailyLimit,
+  setTranscriptDailyLimit,
+  getTranscriptMaxSeconds,
+  setTranscriptMaxSeconds,
+  getTranscriptUsage,
+  incrementTranscriptUsage,
+  isPremium,
+  getPremiumUsers,
+  addPremiumUser,
+  removePremiumUser,
 }

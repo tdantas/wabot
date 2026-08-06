@@ -1,0 +1,104 @@
+---
+# ── PostgreSQL + TimescaleDB ────────────────────────────
+- name: Setup PostgreSQL with TimescaleDB
+  import_tasks: postgresql.yml
+  tags: [postgresql]
+
+# ── Docker ──────────────────────────────────────────────
+- name: Install Docker prerequisites
+  apt:
+    name: [ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+
+- name: Check if Docker is installed
+  command: docker --version
+  register: docker_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Install Docker (if not present)
+  when: docker_check.rc != 0
+  block:
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker Engine
+      apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        state: present
+        update_cache: true
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+# ── Directory structure ─────────────────────────────────
+- name: Create WABot directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+  loop:
+    - "{{ wabot_dir }}"
+    - "{{ wabot_dir }}/build"
+    - "{{ wabot_config_dir }}"
+    - "{{ wabot_data_dir }}"
+    - "{{ wabot_data_dir }}/auth_info"
+
+# ── Seed auth_info (only if empty) ──────────────────────
+- name: Check if auth_info exists on server
+  find:
+    paths: "{{ wabot_data_dir }}/auth_info"
+    file_type: file
+  register: auth_files
+
+- name: Copy local auth_info to server
+  synchronize:
+    src: "{{ playbook_dir }}/../bot/auth_info/"
+    dest: "{{ wabot_data_dir }}/auth_info/"
+  when: auth_files.matched == 0
+
+# ── Caddy base (conf.d dir + import) ────────────────────
+- name: Create conf.d directory
+  file:
+    path: "{{ caddy_config_dir }}/conf.d"
+    state: directory
+    mode: "0755"
+
+- name: Ensure Caddy imports conf.d
+  lineinfile:
+    path: "{{ caddy_config_dir }}/Caddyfile"
+    line: "import /etc/caddy/conf.d/*.caddy"
+    state: present
+  notify: reload caddy
+
+# ── Systemd service ─────────────────────────────────────
+- name: Install WABot systemd service
+  template:
+    src: wabot.service.j2
+    dest: /etc/systemd/system/wabot.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: Enable WABot service
+  systemd:
+    name: wabot
+    enabled: true

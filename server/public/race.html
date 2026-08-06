@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
+  <title>WABot — Race</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
+  <style>
+    .ctrl-btn.play {
+      background: var(--accent); border-color: var(--accent); color: var(--bg);
+      font-weight: 700; padding: 8px 24px; font-size: 0.82rem; min-width: 80px;
+    }
+    .ctrl-btn.play:hover { background: #d49a28; border-color: #d49a28; }
+    .ctrl-btn.play.active-stop {
+      background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.3); color: #ef4444;
+    }
+    .ctrl-btn.play.active-stop:hover { background: rgba(239,68,68,0.25); }
+
+
+
+    /* --- race container --- */
+    .container {
+      position: relative; z-index: 1;
+      max-width: 900px; margin: 0 auto; padding: 32px 24px 80px;
+    }
+
+    .race-date {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 3rem; letter-spacing: -1.5px;
+      color: var(--text); text-align: center;
+      margin-bottom: 32px;
+      background: linear-gradient(135deg, var(--accent) 0%, #f0d080 50%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .race-bars { display: flex; flex-direction: column; gap: 6px; }
+
+    .race-row {
+      display: flex; align-items: center; gap: 12px;
+      height: 40px;
+      transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s;
+      position: absolute; left: 0; right: 0;
+    }
+
+    .race-bars-container {
+      position: relative;
+      width: 100%;
+      overflow: visible;
+      padding-bottom: 10px;
+    }
+
+    .race-pos {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 0.85rem; color: var(--text-muted);
+      min-width: 24px; text-align: right; flex-shrink: 0;
+    }
+
+    .race-name {
+      font-weight: 600; font-size: 0.85rem; color: var(--text);
+      min-width: 110px; max-width: 110px; flex-shrink: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .race-bar-wrap {
+      flex: 1; height: 32px; position: relative;
+      background: rgba(255,255,255,0.02); border-radius: 8px; overflow: hidden;
+    }
+
+    .race-bar {
+      height: 100%; border-radius: 8px;
+      transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+      min-width: 2px;
+    }
+
+    .race-value {
+      font-family: var(--font-display); font-weight: 700;
+      font-size: 0.9rem; color: var(--text);
+      min-width: 60px; text-align: right; flex-shrink: 0;
+    }
+
+    .race-summary {
+      text-align: center; margin-top: 32px; padding: 20px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    }
+    .race-summary-title {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 1.2rem; color: var(--accent); margin-bottom: 4px;
+    }
+    .race-summary-sub {
+      font-size: 0.82rem; color: var(--text-muted);
+    }
+
+    @media (max-width: 700px) {
+      .container { padding: 20px 12px 60px; }
+      .topbar { padding: 12px 16px; }
+      .race-date { font-size: 2.2rem; }
+      .race-name { min-width: 80px; max-width: 80px; font-size: 0.75rem; }
+      .race-row { height: 34px; }
+      .race-bar-wrap { height: 26px; }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="topbar">
+    <span class="topbar-title" id="title">Race</span>
+  </div>
+
+  <div class="container">
+    <div class="filters">
+      <div class="filter-presets" id="racePresets"></div>
+      <div class="filter-dates" id="raceDates">
+        <label>De</label>
+        <input type="date" id="startDate">
+        <label>Até</label>
+        <input type="date" id="endDate">
+      </div>
+      <div style="margin-top:12px">
+        <button class="ctrl-btn play" id="btnToggle">Play</button>
+      </div>
+    </div>
+    <div class="ui-loading">
+      <div class="ui-shimmer ui-text-xl" style="width:160px;margin:0 auto 24px"></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="ui-shimmer" style="width:24px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="width:110px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="flex:1;height:32px;border-radius:8px"></div>
+          <div class="ui-shimmer" style="width:50px;height:16px;border-radius:4px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="ui-shimmer" style="width:24px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="width:110px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="flex:1;height:32px;border-radius:8px;opacity:0.8"></div>
+          <div class="ui-shimmer" style="width:50px;height:16px;border-radius:4px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="ui-shimmer" style="width:24px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="width:110px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="flex:1;height:32px;border-radius:8px;opacity:0.6"></div>
+          <div class="ui-shimmer" style="width:50px;height:16px;border-radius:4px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="ui-shimmer" style="width:24px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="width:110px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="flex:1;height:32px;border-radius:8px;opacity:0.4"></div>
+          <div class="ui-shimmer" style="width:50px;height:16px;border-radius:4px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="ui-shimmer" style="width:24px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="width:110px;height:16px;border-radius:4px"></div>
+          <div class="ui-shimmer" style="flex:1;height:32px;border-radius:8px;opacity:0.3"></div>
+          <div class="ui-shimmer" style="width:50px;height:16px;border-radius:4px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="data-content">
+      <div class="race-date" id="raceDate"></div>
+      <div class="race-bars-container" id="raceBars"></div>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script>
+    const COLORS = [
+      '#e8a832', '#4ade80', '#60a5fa', '#f472b6', '#a78bfa',
+      '#f97316', '#06b6d4', '#84cc16', '#e879f9', '#fb7185',
+      '#34d399', '#fbbf24', '#818cf8', '#f87171', '#a3e635',
+    ]
+    const DAYS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+    const MONTHS_PT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+    if (!groupId) location.href = '/'
+
+
+    function formatRaceDate(dateStr) {
+      const dt = new Date(dateStr + 'T12:00:00')
+      return `${String(dt.getDate()).padStart(2, '0')} ${MONTHS_PT[dt.getMonth()]} ${dt.getFullYear()}`
+    }
+
+    function buildDateRange(start, end) {
+      const out = [], d = new Date(start + 'T12:00:00'), dEnd = new Date(end + 'T12:00:00')
+      while (d <= dEnd) { out.push(localDate(d)); d.setDate(d.getDate() + 1) }
+      return out
+    }
+
+    // --- state ---
+    const $start = document.getElementById('startDate')
+    const $end = document.getElementById('endDate')
+    const $dates = document.getElementById('raceDates')
+
+    const PRESETS = [
+      { label: '15 dias', start: () => daysAgoStr(14), end: () => todayStr() },
+      { label: '30 dias', start: () => daysAgoStr(29), end: () => todayStr() },
+      { label: '2026', start: () => '2026-01-01', end: () => '2026-12-31' },
+      { label: '2025', start: () => '2025-01-01', end: () => '2025-12-31' },
+    ]
+
+    let activePreset = '30 dias'
+    let customMode = false
+
+    function initRaceFilters() {
+      const container = document.getElementById('racePresets')
+      container.innerHTML = PRESETS.map(p =>
+        `<button class="filter-btn${p.label === activePreset ? ' active' : ''}" data-preset="${p.label}">${p.label}</button>`
+      ).join('') + `<button class="filter-btn" data-preset="custom">Custom</button>`
+
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-preset]')
+        if (!btn) return
+        if (btn.dataset.preset === 'custom') {
+          customMode = !customMode
+          activePreset = customMode ? 'custom' : '30 dias'
+          if (!customMode) { selectRacePreset('30 dias'); return }
+          $dates.classList.add('visible')
+          updateRacePresetButtons()
+        } else {
+          selectRacePreset(btn.dataset.preset)
+        }
+      })
+    }
+
+    function selectRacePreset(label) {
+      const preset = PRESETS.find(p => p.label === label)
+      if (!preset) return
+      activePreset = label
+      customMode = false
+      $dates.classList.remove('visible')
+      $start.value = preset.start()
+      $end.value = preset.end()
+      updateRacePresetButtons()
+      stop()
+      loadData()
+    }
+
+    function updateRacePresetButtons() {
+      document.querySelectorAll('#racePresets .filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === activePreset)
+      })
+    }
+
+    // init with 30 days
+    const defaultPreset = PRESETS.find(p => p.label === '30 dias')
+    $start.value = defaultPreset.start()
+    $end.value = defaultPreset.end()
+
+    let raceData = null
+    let allDates = []
+    let currentIdx = 0
+    let cumulative = new Map()
+    let colorMap = new Map()
+    let timer = null
+    let speed = 450
+    let maxSenders = 10
+
+    // --- auto-load on date change ---
+    $start.addEventListener('change', () => { if ($start.value && $end.value) { activePreset = 'custom'; customMode = true; updateRacePresetButtons(); stop(); loadData() } })
+    $end.addEventListener('change', () => { if ($start.value && $end.value) { activePreset = 'custom'; customMode = true; updateRacePresetButtons(); stop(); loadData() } })
+
+    async function loadData() {
+      const start = $start.value, end = $end.value
+      if (!start || !end) return
+
+      try {
+        const url = `${PAGE_PREFIX}/api/stats/race?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}&limit=${maxSenders}`
+        const res = await fetch(url, { cache: 'no-cache' })
+        raceData = await res.json()
+      } catch (err) {
+        document.getElementById('raceDate').textContent = 'Erro ao carregar dados'
+        return
+      }
+
+      document.getElementById('title').textContent = raceData.name
+      document.title = `WABot — ${raceData.name} — Race`
+
+      requestAnimationFrame(() => document.body.classList.add('loaded'))
+
+      // assign colors
+      colorMap.clear()
+      raceData.senders.forEach((s, i) => colorMap.set(s.sender, COLORS[i % COLORS.length]))
+
+      allDates = buildDateRange(start, end)
+      resetRace()
+    }
+
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      return arr
+    }
+
+    function resetRace() {
+      stop()
+      currentIdx = 0
+      cumulative = new Map()
+      shuffle(raceData.senders)
+      raceData.senders.forEach(s => cumulative.set(s.sender, 0))
+      document.getElementById('raceBars').innerHTML = ''
+      renderFrame()
+    }
+
+    // --- controls ---
+    const $toggle = document.getElementById('btnToggle')
+    $toggle.addEventListener('click', toggle)
+
+    function toggle() {
+      if (timer) {
+        stop()
+      } else {
+        play()
+      }
+    }
+
+    function play() {
+      if (!raceData) return
+      if (currentIdx >= allDates.length) resetRace()
+      $toggle.textContent = 'Stop'
+      $toggle.classList.add('active-stop')
+      timer = setInterval(step, speed)
+    }
+
+    function stop() {
+      clearInterval(timer)
+      timer = null
+      $toggle.textContent = 'Play'
+      $toggle.classList.remove('active-stop')
+    }
+
+    function step() {
+      if (currentIdx >= allDates.length) {
+        stop()
+        return
+      }
+
+      const date = allDates[currentIdx]
+
+      // accumulate today's counts
+      if (raceData.days) {
+        for (const row of raceData.days) {
+          if (row.date.slice(0, 10) === date) {
+            cumulative.set(row.sender, (cumulative.get(row.sender) || 0) + row.total)
+          }
+        }
+      }
+
+      currentIdx++
+      renderFrame()
+    }
+
+    function renderFrame() {
+      if (!raceData) return
+
+      const date = allDates[Math.max(0, currentIdx - 1)]
+      document.getElementById('raceDate').textContent = formatRaceDate(date)
+
+      // sort by cumulative desc, preserve order on tie
+      const sorted = raceData.senders
+        .map((s, i) => ({ ...s, total: cumulative.get(s.sender) || 0, idx: i }))
+        .sort((a, b) => b.total - a.total || a.idx - b.idx)
+
+      const visible = sorted.slice(0, maxSenders)
+      const maxVal = visible[0]?.total || 1
+      const container = document.getElementById('raceBars')
+      const rowHeight = 56
+
+      // set container height
+      container.style.height = `${(visible.length - 1) * rowHeight + 50}px`
+
+      // track which senders are visible this frame
+      const visibleSenders = new Set(visible.map(s => s.sender))
+
+      // hide rows no longer in top N
+      container.querySelectorAll('.race-row').forEach(row => {
+        if (!visibleSenders.has(row.dataset.sender)) {
+          row.style.opacity = '0'
+          row.style.pointerEvents = 'none'
+        }
+      })
+
+      // create or update rows
+      visible.forEach((item, rank) => {
+        let row = container.querySelector(`[data-sender="${CSS.escape(item.sender)}"]`)
+        if (!row) {
+          row = document.createElement('div')
+          row.className = 'race-row'
+          row.dataset.sender = item.sender
+          row.innerHTML = `
+            <span class="race-pos"></span>
+            <span class="race-name"></span>
+            <div class="race-bar-wrap"><div class="race-bar"></div></div>
+            <span class="race-value"></span>
+          `
+          container.appendChild(row)
+        }
+
+        const color = colorMap.get(item.sender)
+        const pct = maxVal > 0 ? (item.total / maxVal * 100) : 0
+
+        row.style.opacity = '1'
+        row.style.pointerEvents = ''
+        row.querySelector('.race-pos').textContent = rank + 1
+        const parts = item.name.split(' ').filter(Boolean)
+        row.querySelector('.race-name').textContent = parts.length > 1 ? `${parts[0]} ${parts[1][0]}.` : parts[0]
+        row.querySelector('.race-name').title = item.name
+        row.querySelector('.race-bar').style.width = `${Math.max(pct, 0.5)}%`
+        row.querySelector('.race-bar').style.background = color
+        row.querySelector('.race-value').textContent = item.total.toLocaleString('pt-PT')
+        row.style.transform = `translateY(${rank * rowHeight}px)`
+      })
+    }
+
+    // auto-load
+    initRaceFilters()
+    loadData()
+  </script>
+</body>
+</html>

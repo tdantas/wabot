@@ -1,20 +1,11 @@
-const { open } = require('./db')
+const { sql } = require('./db')
 
 const INTERVAL = parseInt(process.env.MONITOR_INTERVAL, 10) || 5000
 
-let db
-let upsert
-
 function start() {
-  db = open()
-  upsert = db.prepare(`
-    INSERT INTO bot_metrics (key, value, updated_at) VALUES (?, ?, datetime('now'))
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
-  `)
-
   let lastCheck = process.hrtime.bigint()
 
-  setInterval(() => {
+  setInterval(async () => {
     const now = process.hrtime.bigint()
     const elapsed = Number(now - lastCheck) / 1e6
     const lag = Math.max(0, elapsed - INTERVAL)
@@ -32,7 +23,10 @@ function start() {
     }
 
     try {
-      upsert.run('bot_metrics', JSON.stringify(metrics))
+      await sql`
+        INSERT INTO bot_metrics (key, value, updated_at) VALUES ('bot_metrics', ${JSON.stringify(metrics)}, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      `
     } catch (_) {}
   }, INTERVAL).unref()
 }

@@ -1,5 +1,5 @@
 ---
-- name: Provision WABot
+- name: Deploy WABot
   hosts: wabot
   become: true
 
@@ -8,6 +8,8 @@
     wabot_config_dir: /etc/wabot
     wabot_data_dir: /var/lib/wabot
     wabot_port: 3001
+    wabot_db_name: wabot
+    wabot_db_user: wabot
     caddy_config_dir: /etc/caddy
 
   vars_files:

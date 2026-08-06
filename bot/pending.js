@@ -1,36 +1,27 @@
-const { open } = require('./db')
+const { sql } = require('./db')
 
-const db = open()
-
-const insert = db.prepare(`
-  INSERT INTO pending_requests (message_id, group_id, sender, command, query, expires_at)
-  VALUES (?, ?, ?, ?, ?, datetime('now', '+5 minutes'))
-`)
-
-const select = db.prepare(`
-  SELECT * FROM pending_requests
-  WHERE message_id = ? AND expires_at > datetime('now')
-`)
-
-const remove = db.prepare('DELETE FROM pending_requests WHERE message_id = ?')
-
-const cleanup = db.prepare("DELETE FROM pending_requests WHERE expires_at <= datetime('now')")
-
-function save(messageId, groupId, sender, command, query) {
-  insert.run(messageId, groupId, sender, command, query)
+async function save(messageId, groupId, sender, command, query) {
+  await sql`
+    INSERT INTO pending_requests (message_id, group_id, sender, command, query, expires_at)
+    VALUES (${messageId}, ${groupId}, ${sender}, ${command}, ${query}, NOW() + INTERVAL '5 minutes')
+  `
 }
 
-function get(messageId) {
-  return select.get(messageId)
+async function get(messageId) {
+  const [row] = await sql`
+    SELECT * FROM pending_requests
+    WHERE message_id = ${messageId} AND expires_at > NOW()
+  `
+  return row || null
 }
 
-function del(messageId) {
-  remove.run(messageId)
+async function del(messageId) {
+  await sql`DELETE FROM pending_requests WHERE message_id = ${messageId}`
 }
 
-function purgeExpired() {
-  const result = cleanup.run()
-  return result.changes
+async function purgeExpired() {
+  const result = await sql`DELETE FROM pending_requests WHERE expires_at <= NOW()`
+  return result.count
 }
 
 module.exports = { save, get, del, purgeExpired }

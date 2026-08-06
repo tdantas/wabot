@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
+  <title>WABot — Ranking</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="list-topbar">
+    <span class="topbar-title" id="title">Lista</span>
+    <span style="flex:1"></span>
+    <button class="share-btn topbar-share" id="topbarShare" style="display:none" onclick="shareRanking()"></button>
+  </div>
+
+  <div class="container">
+    <div class="period-label" id="periodLabel"></div>
+
+    <div class="filters">
+      <div class="filter-presets" id="presets"></div>
+      <div class="filter-dates">
+        <label>De</label>
+        <input type="date" id="startDate">
+        <label>Até</label>
+        <input type="date" id="endDate">
+      </div>
+    </div>
+
+    <div class="ui-loading" id="skelList">
+      <div style="margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <div class="ui-shimmer ui-text" style="width:120px"></div>
+        <div class="ui-shimmer" style="height:20px;width:32px;border-radius:6px"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;background:linear-gradient(135deg,rgba(232,168,50,0.08),transparent 70%);border:1px solid rgba(232,168,50,0.1);border-radius:12px">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:70%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:100%"></div></div>
+          <div class="ui-shimmer" style="width:36px;height:18px;border-radius:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;border-radius:12px;background:var(--surface)">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:55%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:80%"></div></div>
+          <div class="ui-shimmer" style="width:30px;height:18px;border-radius:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;border-radius:12px">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:65%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:60%"></div></div>
+          <div class="ui-shimmer" style="width:28px;height:18px;border-radius:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;border-radius:12px;background:var(--surface)">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:50%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:45%"></div></div>
+          <div class="ui-shimmer" style="width:24px;height:18px;border-radius:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;border-radius:12px">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:60%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:35%"></div></div>
+          <div class="ui-shimmer" style="width:22px;height:18px;border-radius:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:4px;padding:12px 16px;border-radius:12px;background:var(--surface)">
+          <div class="ui-shimmer ui-circle" style="width:24px;height:24px"></div>
+          <div><div class="ui-shimmer ui-text" style="width:45%;margin-bottom:6px"></div><div class="ui-shimmer ui-bar" style="width:25%"></div></div>
+          <div class="ui-shimmer" style="width:20px;height:18px;border-radius:4px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="card" class="data-content"></div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script>
+    const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+
+    function heatColor(total) {
+      if (total < 10) return 'var(--heat-1)'
+      if (total < 30) return 'var(--heat-2)'
+      if (total < 55) return 'var(--heat-3)'
+      if (total < 80) return 'var(--heat-4)'
+      if (total < 105) return 'var(--heat-5)'
+      if (total < 130) return 'var(--heat-6)'
+      if (total < 150) return 'var(--heat-7)'
+      return 'var(--heat-8)'
+    }
+
+    if (!groupId) location.href = '/'
+
+
+    // --- presets ---
+    const PRESETS = [
+      { label: 'Hoje', start: () => todayStr(), end: () => todayStr() },
+      { label: '7 dias', start: () => daysAgoStr(6), end: () => todayStr() },
+      { label: '15 dias', start: () => daysAgoStr(14), end: () => todayStr() },
+      { label: '30 dias', start: () => daysAgoStr(29), end: () => todayStr() },
+      { label: '2026', start: () => '2026-01-01', end: () => '2026-12-31' },
+      { label: '2025', start: () => '2025-01-01', end: () => '2025-12-31' },
+    ]
+
+    let activePreset = 'Hoje'
+    let customMode = false
+    let startDate = todayStr()
+    let endDate = todayStr()
+
+    const $start = document.getElementById('startDate')
+    const $end = document.getElementById('endDate')
+    const $dates = document.querySelector('.filter-dates')
+
+    function formatDatePT(dateStr) {
+      const [y, m, d] = dateStr.split('-')
+      return `${d}/${m}/${y}`
+    }
+
+    function updatePeriodLabel() {
+      const $label = document.getElementById('periodLabel')
+      if (startDate === endDate) {
+        $label.innerHTML = `Período: <span>${formatDatePT(startDate)}</span>`
+      } else {
+        $label.innerHTML = `Período: <span>${formatDatePT(startDate)}</span> a <span>${formatDatePT(endDate)}</span>`
+      }
+    }
+
+    function initFilters() {
+      const container = document.getElementById('presets')
+      container.innerHTML = PRESETS.map(p =>
+        `<button class="filter-btn${p.label === activePreset ? ' active' : ''}" data-preset="${p.label}">${p.label}</button>`
+      ).join('') + `<button class="filter-btn" data-preset="custom">Custom</button>`
+
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-preset]')
+        if (!btn) return
+        if (btn.dataset.preset === 'custom') {
+          toggleCustom()
+        } else {
+          selectPreset(btn.dataset.preset)
+        }
+      })
+
+      $start.value = startDate
+      $end.value = endDate
+      $start.addEventListener('change', onDateChange)
+      $end.addEventListener('change', onDateChange)
+      updatePeriodLabel()
+    }
+
+    function selectPreset(label) {
+      const p = PRESETS.find(x => x.label === label)
+      if (!p) return
+      activePreset = label
+      customMode = false
+      startDate = p.start()
+      endDate = p.end()
+      $start.value = startDate
+      $end.value = endDate
+      $dates.classList.remove('visible')
+      openDrilldowns.group = null
+      openDrilldowns.users.clear()
+      updatePresetButtons()
+      updatePeriodLabel()
+      fetchStats()
+    }
+
+    function toggleCustom() {
+      customMode = !customMode
+      activePreset = customMode ? 'custom' : 'Hoje'
+      if (!customMode) {
+        selectPreset('Hoje')
+        return
+      }
+      $dates.classList.add('visible')
+      updatePresetButtons()
+    }
+
+    function onDateChange() {
+      startDate = $start.value
+      endDate = $end.value
+      activePreset = 'custom'
+      customMode = true
+      openDrilldowns.group = null
+      openDrilldowns.users.clear()
+      updatePresetButtons()
+      updatePeriodLabel()
+      fetchStats()
+    }
+
+    function updatePresetButtons() {
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === activePreset)
+      })
+    }
+
+    // --- drilldown state ---
+    const openDrilldowns = {
+      group: null,
+      users: new Map()
+    }
+
+    // --- data fetching ---
+    function apiUrl(path, extra = '') {
+      return `${PAGE_PREFIX}${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
+    }
+
+    async function fetchStats() {
+      const fetches = [fetch(apiUrl('/api/stats'), FETCH_OPTS)]
+
+      // refresh open drilldowns in parallel
+      if (openDrilldowns.group) {
+        fetches.push(fetch(apiUrl('/api/stats/daily'), FETCH_OPTS))
+      }
+      const userEntries = [...openDrilldowns.users.entries()]
+      for (const [sender] of userEntries) {
+        fetches.push(fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS))
+      }
+
+      const responses = await Promise.all(fetches)
+      const data = await responses[0].json()
+
+      let idx = 1
+      if (openDrilldowns.group) {
+        openDrilldowns.group.rows = await responses[idx++].json()
+      }
+      for (const [sender, dd] of userEntries) {
+        dd.rows = await responses[idx++].json()
+      }
+
+      document.getElementById('title').textContent = data.name
+      document.title = `WABot — ${data.name}`
+      render(data)
+    }
+
+    async function loadGroupDrilldown() {
+      if (openDrilldowns.group) { openDrilldowns.group = null; fetchStats(); return }
+      const res = await fetch(apiUrl('/api/stats/daily'), FETCH_OPTS)
+      const rows = await res.json()
+      openDrilldowns.group = { rows, title: 'Atividade por dia', isNew: true }
+      fetchStats()
+    }
+
+    async function loadUserDrilldown(sender, name) {
+      if (openDrilldowns.users.has(sender)) { openDrilldowns.users.delete(sender); fetchStats(); return }
+      const res = await fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
+      const rows = await res.json()
+      openDrilldowns.users.set(sender, { rows, title: `${name} — por dia`, isNew: true })
+      fetchStats()
+    }
+
+    function closeDrilldown(key) {
+      if (key === 'group') openDrilldowns.group = null
+      else openDrilldowns.users.delete(key)
+      fetchStats()
+    }
+
+    // --- rendering ---
+    function groupByDate(rows) {
+      const map = new Map()
+      for (const r of rows) {
+        if (!map.has(r.date)) {
+          map.set(r.date, { date: r.date, day_of_week: r.day_of_week, manha: 0, noite: 0, total: 0 })
+        }
+        const entry = map.get(r.date)
+        if (r.period === 'manha') entry.manha += r.total
+        else entry.noite += r.total
+        entry.total = entry.manha + entry.noite
+      }
+      return Array.from(map.values())
+    }
+
+    function renderDrilldown(rows, title, closeKey, isNew) {
+      const closeAttr = `onclick="event.stopPropagation(); closeDrilldown('${closeKey}')"`
+      const animClass = isNew ? ' is-new' : ''
+      if (!rows || rows.length === 0) {
+        return `
+          <div class="drilldown${animClass}">
+            <div class="drilldown-header">
+              <span class="drilldown-title">${title}</span>
+              <button class="drilldown-close" ${closeAttr}>&times;</button>
+            </div>
+            <div class="empty">Sem dados</div>
+          </div>`
+      }
+      const days = groupByDate(rows).slice(-15)
+      const max = Math.max(...days.map(d => d.total))
+      return `
+        <div class="drilldown${animClass}">
+          <div class="drilldown-header">
+            <span class="drilldown-title">${title}</span>
+            <button class="drilldown-close" ${closeAttr}>&times;</button>
+          </div>
+          <div class="drilldown-legend">
+            <span class="legend-item"><span class="legend-dot manha"></span>Manhã (6h-18h)</span>
+            <span class="legend-item"><span class="legend-dot noite"></span>Noite (18h-6h)</span>
+          </div>
+          <div class="drilldown-rows">
+            ${days.map(d => {
+              const pctM = (d.manha / max * 100).toFixed(1)
+              const pctN = (d.noite / max * 100).toFixed(1)
+              const color = heatColor(d.total)
+              const dt = new Date(d.date)
+              const dayLabel = `${DAYS[d.day_of_week]} ${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}`
+              return `
+                <div class="drill-row">
+                  <span class="drill-day">${dayLabel}</span>
+                  <span class="drill-bar-track">
+                    ${d.manha > 0 ? `<div class="drill-bar-fill manha" style="width:${pctM}%;background:${color}" title="Manhã: ${d.manha}"></div>` : ''}
+                    ${d.noite > 0 ? `<div class="drill-bar-fill noite" style="width:${pctN}%;background:${color}" title="Noite: ${d.noite}"></div>` : ''}
+                  </span>
+                  <span class="drill-count">${d.total}</span>
+                </div>`
+            }).join('')}
+          </div>
+        </div>`
+    }
+
+    function renderRanking(items, maxCount) {
+      if (items.length === 0) {
+        return '<div class="empty">Sem dados suficientes</div>'
+      }
+
+      let pos = 1
+      const ranked = items.map((item, i) => {
+        if (i > 0 && item.count < items[i - 1].count) pos = i + 1
+        return { ...item, pos }
+      })
+
+      return `<div class="rank-list">${ranked.map(item => {
+        const clickAttr = item.sender
+          ? ` onclick="loadUserDrilldown('${item.sender}', '${esc(item.name).replace(/'/g, "&#39;")}')"` : ''
+        let userDrilldown = ''
+        if (item.sender && openDrilldowns.users.has(item.sender)) {
+          const dd = openDrilldowns.users.get(item.sender)
+          userDrilldown = renderDrilldown(dd.rows, dd.title, item.sender, dd.isNew)
+          dd.isNew = false
+        }
+        const barPct = (item.count / maxCount * 100).toFixed(0)
+        const posAttr = item.pos <= 3 ? ` data-pos="${item.pos}"` : ''
+
+        return `
+          <div class="rank-item clickable"${posAttr}${clickAttr}>
+            <span class="rank-pos">${item.pos}</span>
+            <div class="rank-main">
+              <span class="rank-name">${esc(item.name)}</span>
+              <div class="rank-bar-track">
+                <div class="rank-bar-fill" style="width:${barPct}%"></div>
+              </div>
+            </div>
+            <span class="rank-count">${item.count}<small>ativ</small></span>
+          </div>
+          ${userDrilldown}`
+      }).join('')}</div>`
+    }
+
+    function render(data) {
+      const card = document.getElementById('card')
+      const maxCount = data.rows[0]?.count || 1
+      const total = data.rows.reduce((s, r) => s + r.count, 0)
+
+      const groupDrilldownHtml = openDrilldowns.group
+        ? renderDrilldown(openDrilldowns.group.rows, openDrilldowns.group.title, 'group', openDrilldowns.group.isNew)
+        : ''
+      if (openDrilldowns.group) openDrilldowns.group.isNew = false
+
+      const showDailyLink = startDate !== endDate
+
+      // store for sharing
+      window._lastRanking = { name: data.name, rows: data.rows, start: startDate, end: endDate }
+
+      // show topbar share button
+      if (canShare()) {
+        const btn = document.getElementById('topbarShare')
+        if (btn && !btn.innerHTML) btn.innerHTML = _shareIcon + ' Partilhar'
+        if (btn) btn.style.display = ''
+      }
+
+      card.innerHTML = `
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">Ranking</span>
+            ${total > 0 ? `<span class="section-badge">${total} total</span>` : ''}
+            ${showDailyLink ? `<span class="section-expand" onclick="loadGroupDrilldown()">${openDrilldowns.group ? 'Fechar' : 'Ver por dia'} &#9656;</span>` : ''}
+          </div>
+          ${groupDrilldownHtml}
+          ${renderRanking(data.rows, maxCount)}
+        </div>
+      `
+    }
+
+    function shareRanking() {
+      const r = window._lastRanking
+      if (!r) return
+      const medals = ['\u{1F947}', '\u{1F948}', '\u{1F949}']
+      const period = r.start === r.end ? formatDatePT(r.start) : `${formatDatePT(r.start)} a ${formatDatePT(r.end)}`
+      const time = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+      const lines = r.rows.slice(0, 3).map((row, i) => `${medals[i]} *${row.name}* ${row.count} ativ`)
+      const text = `*Usage Report ${r.name}*\n${period} às ${time}\n\n${lines.join('\n')}\n\nEnvia *!live* no grupo para ver o relatório completo`
+      shareResults(`Usage Report ${r.name}`, text)
+    }
+
+    // load immediately
+    initFilters()
+    fetchStats().then(() => {
+      requestAnimationFrame(() => document.body.classList.add('loaded'))
+    })
+    setInterval(fetchStats, 5000)
+    initPullToRefresh(fetchStats)
+  </script>
+</body>
+</html>

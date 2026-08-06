@@ -40,10 +40,10 @@ FOOTBALL_API_KEY=sua_chave_api_football
 }
 ```
 
-### 3. Criar diretório de dados
+### 3. Criar diretórios de dados
 
 ```bash
-mkdir -p data/auth_info
+mkdir -p data/auth_info data/pgdata
 ```
 
 ### 4. Build com Earthly
@@ -70,7 +70,7 @@ docker compose logs -f bot
 
 Escaneia com WhatsApp > Aparelhos Conectados.
 
-### 4. Descobrir IDs dos grupos
+### 6. Descobrir IDs dos grupos
 
 Deixa `"groups": []` no `config.json` e inicia o bot. Após conectar, o bot lista todos os grupos com ID e nome nos logs. Copia os IDs desejados para o `config.json` e reinicia:
 
@@ -78,10 +78,47 @@ Deixa `"groups": []` no `config.json` e inicia o bot. Após conectar, o bot list
 docker compose restart bot
 ```
 
+## Dev local (sem Docker para bot/server)
+
+### 1. Iniciar TimescaleDB
+
+```bash
+mkdir -p data/pgdata
+docker compose up timescaledb -d
+```
+
+### 2. Configurar `.env`
+
+```env
+DATABASE_URL=postgres://wabot:wabot@localhost:5432/wabot
+GEMINI_API_KEY=sua_chave
+FOOTBALL_API_KEY=sua_chave
+```
+
+### 3. Instalar dependências
+
+```bash
+cd bot && npm install && cd ..
+cd server && npm install && cd ..
+```
+
+### 4. Iniciar bot e server
+
+```bash
+# Terminal 1 — bot
+cd bot && node wa.js
+
+# Terminal 2 — server
+cd server && node server.js
+```
+
+O bot corre as migrations automaticamente ao arrancar (cria tabelas, hypertable e continuous aggregates no TimescaleDB).
+
 ## Serviços
 
 | Serviço | Porta | Descrição |
 |---------|-------|-----------|
+| `timescaledb` | `5432` | PostgreSQL + TimescaleDB |
 | `bot` | — | WhatsApp bot + comandos |
 | `server` | `3000` | Dashboard web + analytics |
 
@@ -90,8 +127,10 @@ docker compose restart bot
 | Página | URL | Descrição |
 |--------|-----|-----------|
 | Grupos | `/` | Lista de grupos monitorizados |
-| Ranking | `/group.html?id=<group_id>` | Ranking + drilldowns (manhã/noite) |
-| Analytics | `/charts.html?id=<group_id>` | 6 gráficos interativos |
+| Ranking | `/group.html?id=<uuid>` | Ranking + drilldowns (manhã/noite) |
+| Analytics | `/charts.html?id=<uuid>` | 6 gráficos interativos |
+| Calendário | `/calendar.html?id=<uuid>` | Calendário de atividade |
+| Admin | `/admin/` | Gestão de grupos e comandos |
 
 ## Variáveis de ambiente
 
@@ -99,6 +138,7 @@ Ver `.env.example` para o template completo.
 
 | Variável | Obrigatório | Default | Descrição |
 |----------|:-----------:|---------|-----------|
+| `DATABASE_URL` | sim | `postgres://wabot:wabot@localhost:5432/wabot` | Connection string PostgreSQL |
 | `GEMINI_API_KEY` | sim | — | Chave da API Google Gemini |
 | `FOOTBALL_API_KEY` | sim | — | Chave da API-Football (api-football.com) |
 | `GEMINI_MODEL` | | `gemini-2.5-flash` | Modelo Gemini |
@@ -106,11 +146,12 @@ Ver `.env.example` para o template completo.
 | `TZ` | | `Europe/Lisbon` | Timezone para período manhã/noite |
 | `LOG_LEVEL` | | `info` | Nível de log (debug, info, warn, error) |
 | `VERBOSE` | | `false` | Loga prompts e respostas do Gemini |
-| `MONITOR_INTERVAL` | | `30000` | Intervalo do monitor de conexão (ms) |
+| `MONITOR_INTERVAL` | | `30000` | Intervalo do monitor de métricas (ms) |
 | `LIVE_DOMAIN` | | `http://localhost:3000` | Domínio para links do `!live` |
 | `JWT_SECRET` | | auto-generated | Secret para assinar JWTs |
-| `DB_PATH` | | `bot/wabot.db` | Caminho do SQLite |
 | `AUTH_DIR` | | `auth_info` | Diretório da sessão WhatsApp |
+| `ADMIN_EMAIL` | | — | Email do admin para login no dashboard |
+| `ADMIN_PASSWORD` | | — | Password do admin |
 
 ## Comandos do bot
 
@@ -125,6 +166,8 @@ Ver `.env.example` para o template completo.
 | `/bot parabens <nome>` | `felizaniversario` | Mensagem de parabéns |
 | `/bot food <tipo>` | `food`, `rango`, `comida` | Restaurantes próximos (Google Maps) |
 | `/bot profile` | `perfil` | Perfil dos integrantes |
+| `/bot live` | `aovivo`, `online`, `zaprats` | Link temporário para o dashboard |
+| `/bot weather <cidade>` | `tempo`, `meteo`, `clima` | Previsão meteorológica |
 
 Prefixos suportados: `/` e `!` (ex: `!news petróleo`, `!fut jogos do Benfica`)
 
@@ -191,14 +234,12 @@ O sistema carrega: `RULES.md` + `<comando>/command.md` + `<comando>/<alias>.md` 
 
 ## Volumes persistentes
 
-Os dados ficam em `./data/` no host (bind mount):
-
 | Volume | Host path | Container path | Descrição |
 |--------|-----------|----------------|-----------|
 | `wabot-auth` | `./data/auth_info/` | `/app/auth_info` | Sessão WhatsApp (não perder) |
-| `wabot-data` | `./data/` | `/app/data` | SQLite (`wabot.db`) |
+| `wabot-pgdata` | `./data/pgdata/` | `/var/lib/postgresql/data` | Dados PostgreSQL/TimescaleDB |
 
-Para usar paths custom, defina `AUTH_PATH` e `DATA_PATH` no `.env`.
+Para usar paths custom, defina `AUTH_PATH` e `PGDATA_PATH` no `.env`.
 
 ## Comandos úteis
 
@@ -211,7 +252,8 @@ earthly +bot-image
 earthly +server-image
 
 # Containers
-docker compose up -d              # Start
+docker compose up -d              # Start tudo
+docker compose up timescaledb -d  # Só database (dev local)
 docker compose logs -f bot        # Logs do bot
 docker compose logs -f server     # Logs do dashboard
 docker compose restart            # Reiniciar tudo

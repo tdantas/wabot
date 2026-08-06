@@ -1,0 +1,95 @@
+---
+# ── PostgreSQL + TimescaleDB for WABot ──────────────────
+# Idempotent — safe to run multiple times.
+# Does NOT touch existing databases or roles.
+
+- name: Add TimescaleDB APT repository key
+  apt_key:
+    url: https://packagecloud.io/timescale/timescaledb/gpgkey
+    state: present
+
+- name: Add TimescaleDB APT repository
+  apt_repository:
+    repo: "deb https://packagecloud.io/timescale/timescaledb/ubuntu/ {{ ansible_distribution_release }} main"
+    state: present
+    filename: timescaledb
+
+- name: Install TimescaleDB for PostgreSQL 16
+  apt:
+    name: timescaledb-2-postgresql-16
+    state: present
+    update_cache: true
+
+- name: Install Python psycopg2 (for Ansible postgresql modules)
+  apt:
+    name: python3-psycopg2
+    state: present
+
+# Preserve existing shared_preload_libraries — append timescaledb if not already present
+- name: Read current shared_preload_libraries
+  command: grep -E "^shared_preload_libraries" /etc/postgresql/16/main/postgresql.conf
+  register: current_spl
+  changed_when: false
+  failed_when: false
+
+- name: Enable timescaledb in shared_preload_libraries (fresh)
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: "^#?shared_preload_libraries"
+    line: "shared_preload_libraries = 'timescaledb'"
+    state: present
+  register: pg_conf_changed
+  when: current_spl.rc != 0 or current_spl.stdout == ''
+
+- name: Append timescaledb to existing shared_preload_libraries
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: "^(shared_preload_libraries\\s*=\\s*'(?!.*timescaledb)(.*))'$"
+    line: "shared_preload_libraries = '\\2,timescaledb'"
+    backrefs: true
+    state: present
+  register: pg_conf_appended
+  when: current_spl.rc == 0 and current_spl.stdout != '' and 'timescaledb' not in current_spl.stdout
+
+- name: Allow local auth for wabot user
+  lineinfile:
+    path: /etc/postgresql/16/main/pg_hba.conf
+    line: "host    {{ wabot_db_name }}           {{ wabot_db_user }}           127.0.0.1/32            scram-sha-256"
+    state: present
+  register: pg_hba_changed
+
+- name: Allow Docker bridge auth for wabot user
+  lineinfile:
+    path: /etc/postgresql/16/main/pg_hba.conf
+    line: "host    {{ wabot_db_name }}           {{ wabot_db_user }}           172.16.0.0/12           scram-sha-256"
+    state: present
+  register: pg_hba_docker
+
+- name: Restart PostgreSQL (if config changed)
+  systemd:
+    name: postgresql
+    state: restarted
+  when: pg_conf_changed.changed | default(false) or pg_conf_appended.changed | default(false) or pg_hba_changed.changed or pg_hba_docker.changed
+
+- name: Create wabot PostgreSQL user
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ wabot_db_user }}"
+    password: "{{ wabot_db_password }}"
+    state: present
+    no_password_changes: true
+
+- name: Create wabot database
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ wabot_db_name }}"
+    owner: "{{ wabot_db_user }}"
+    state: present
+
+- name: Enable TimescaleDB extension on wabot database
+  become_user: postgres
+  community.postgresql.postgresql_ext:
+    name: timescaledb
+    db: "{{ wabot_db_name }}"
+    state: present
+

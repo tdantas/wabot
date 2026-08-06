@@ -1,17 +1,36 @@
 services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      - POSTGRES_USER=${PGUSER:-wabot}
+      - POSTGRES_PASSWORD=${PGPASSWORD:-wabot}
+      - POSTGRES_DB=${PGDATABASE:-wabot}
+    volumes:
+      - wabot-pgdata:/var/lib/postgresql/data
+    ports:
+      - "${PGPORT:-5432}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-wabot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   bot:
     image: wabot-bot:latest
     env_file: .env
     environment:
       - TZ=${TZ:-Europe/Lisbon}
-      - DB_PATH=/app/data/wabot.db
+      - DATABASE_URL=postgres://${PGUSER:-wabot}:${PGPASSWORD:-wabot}@timescaledb:5432/${PGDATABASE:-wabot}
       - AUTH_DIR=/app/auth_info
     volumes:
       - wabot-auth:/app/auth_info
-      - wabot-data:/app/data
       - ./bot/config.json:/app/config.json:ro
       - ./bot/prompts:/app/prompts:ro
     restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
 
   server:
     image: wabot-server:latest
@@ -19,14 +38,13 @@ services:
     environment:
       - TZ=${TZ:-Europe/Lisbon}
       - PORT=3000
-      - DB_PATH=/app/data/wabot.db
-    volumes:
-      - wabot-data:/app/data:ro
+      - DATABASE_URL=postgres://${PGUSER:-wabot}:${PGPASSWORD:-wabot}@timescaledb:5432/${PGDATABASE:-wabot}
     ports:
       - "${PORT:-3000}:3000"
     restart: unless-stopped
     depends_on:
-      - bot
+      timescaledb:
+        condition: service_healthy
 
 volumes:
   wabot-auth:
@@ -35,9 +53,9 @@ volumes:
       type: none
       o: bind
       device: ${AUTH_PATH:-./data/auth_info}
-  wabot-data:
+  wabot-pgdata:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${DATA_PATH:-./data}
+      device: ${PGDATA_PATH:-./data/pgdata}

@@ -2,89 +2,32 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
   <title>WABot — Calendário</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
   <style>
-    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-    :root {
-      --bg: #0a0b0f;
-      --surface: rgba(255,255,255,0.035);
-      --border: rgba(255,255,255,0.06);
-      --border-accent: rgba(232,168,50,0.2);
-      --text: #e8e6e1;
-      --text-secondary: #a09d95;
-      --text-muted: #5a574f;
-      --accent: #e8a832;
-      --accent-soft: rgba(232,168,50,0.12);
-      --font-display: 'Bricolage Grotesque', serif;
-      --font-body: 'Outfit', sans-serif;
-    }
-
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-
-    body::before {
-      content: '';
-      position: fixed; inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none; z-index: 9999;
-    }
-
-    .bg-glow { position: fixed; border-radius: 50%; filter: blur(150px); pointer-events: none; z-index: 0; }
-    .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; background: var(--accent); opacity: 0.06; }
-    .bg-glow--2 { width: 500px; height: 500px; bottom: -150px; left: -150px; background: #4a2d7a; opacity: 0.08; }
-
-    /* --- topbar --- */
-    .topbar {
-      position: sticky; top: 0; z-index: 10;
-      background: rgba(10,11,15,0.85); backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 28px;
-      display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
-    }
-
-    .back-link {
-      display: inline-flex; align-items: center; gap: 6px;
-      color: var(--text-muted); text-decoration: none;
-      font-size: 0.78rem; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;
-      transition: color 0.2s; flex-shrink: 0;
-    }
-    .back-link:hover { color: var(--accent); }
-    .back-link svg { width: 16px; height: 16px; }
-
-    .topbar-title {
-      font-family: var(--font-display); font-weight: 800;
-      font-size: 1.1rem; letter-spacing: -0.5px; flex-shrink: 0;
-    }
-
-    .topbar-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+    .bg-glow--1 { width: 600px; height: 600px; top: -200px; right: -100px; opacity: 0.06; }
+    .bg-glow--2 { width: 500px; height: 500px; bottom: -150px; left: -150px; opacity: 0.08; }
 
     .topbar-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
-    .ctrl-btn {
-      font-family: var(--font-body); font-size: 0.72rem; font-weight: 500;
-      letter-spacing: 0.3px; padding: 5px 12px; border-radius: 6px;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
-    }
-    .ctrl-btn:hover { border-color: var(--border-accent); color: var(--text); }
-    .ctrl-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); font-weight: 600; }
-
     /* --- month nav --- */
     .month-nav {
-      display: flex; align-items: center; gap: 12px; margin-left: auto;
+      display: flex; align-items: center; gap: 12px; margin: 0 auto;
     }
     .month-nav-btn {
       font-family: var(--font-body); font-size: 0.8rem; font-weight: 500;
-      width: 32px; height: 32px; border-radius: 8px;
+      width: 44px; height: 44px; border-radius: 10px;
       border: 1px solid var(--border); background: transparent;
       color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
       display: grid; place-items: center;
@@ -95,28 +38,49 @@
       font-size: 0.95rem; letter-spacing: 0.5px; min-width: 140px; text-align: center;
     }
 
-    /* --- container --- */
-    .container {
-      position: relative; z-index: 1;
-      max-width: 1200px; margin: 0 auto; padding: 28px 24px 80px;
+    /* --- container override --- */
+    .container { max-width: 1200px; padding: 28px 24px 80px; }
+
+    /* --- top 3 bar --- */
+    .top-bar {
+      display: flex; gap: 16px; justify-content: center; margin-bottom: 28px;
+    }
+    .top-bar-title {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 0.82rem; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-muted); text-align: center; margin-bottom: 12px;
+    }
+    .top-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 16px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+      transition: all 0.2s; flex: 1; max-width: 220px;
+    }
+    .top-card:hover { background: rgba(255,255,255,0.05); }
+    .top-rank {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: 0.7rem; letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .top-rank--1 { color: #e8a832; }
+    .top-rank--2 { color: #a8a4b8; }
+    .top-rank--3 { color: #c47d3e; }
+    .top-avatar {
+      width: 48px; height: 48px; border-radius: 50%;
+      display: grid; place-items: center;
+      font-family: var(--font-display); font-weight: 800; font-size: 1rem;
+      color: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+    .top-name {
+      font-size: 0.88rem; font-weight: 600; color: var(--text);
+      text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .top-count {
+      font-family: var(--font-display); font-size: 1.1rem; font-weight: 800; color: var(--text);
+    }
+    .top-label {
+      font-size: 0.68rem; color: var(--text-muted); font-weight: 500; margin-top: -4px;
     }
 
-    /* --- legend --- */
-    .legend {
-      display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
-      padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    }
-    .legend-item {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 0.75rem; font-weight: 500; color: var(--text-secondary);
-    }
-    .legend-avatar {
-      width: 24px; height: 24px; border-radius: 50%;
-      display: grid; place-items: center;
-      font-family: var(--font-display); font-weight: 800; font-size: 0.6rem;
-      color: #fff; flex-shrink: 0;
-    }
-    .legend-count { color: var(--text-muted); font-size: 0.68rem; }
 
     /* --- calendar --- */
     .calendar-grid {
@@ -170,12 +134,11 @@
       .cal-avatar { width: 34px; height: 34px; font-size: 0.75rem; }
       .cal-name { font-size: 0.7rem; }
       .cal-date { font-size: 0.78rem; }
-      .topbar { padding: 12px 16px; }
-    }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(16px); }
-      to { opacity: 1; transform: translateY(0); }
+      .top-bar { gap: 10px; }
+      .top-card { padding: 12px 8px; }
+      .top-avatar { width: 36px; height: 36px; font-size: 0.8rem; }
+      .top-name { font-size: 0.75rem; }
+      .top-count { font-size: 0.9rem; }
     }
   </style>
 </head>
@@ -184,12 +147,7 @@
   <div class="bg-glow bg-glow--2"></div>
 
   <div class="topbar">
-    <a class="back-link" id="backLink" href="/">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-      Ranking
-    </a>
     <span class="topbar-title" id="title">Calendário</span>
-    <span class="topbar-divider"></span>
     <div class="month-nav">
       <button class="month-nav-btn" id="prevMonth">&larr;</button>
       <span class="month-label" id="monthLabel"></span>
@@ -198,10 +156,44 @@
   </div>
 
   <div class="container">
-    <div class="legend" id="legend"></div>
-    <div class="calendar-grid" id="calendarGrid"></div>
+    <div class="ui-loading">
+      <div style="display:flex;gap:12px;margin-bottom:20px">
+        <div class="ui-shimmer" style="height:90px;flex:1;border-radius:14px"></div>
+        <div class="ui-shimmer" style="height:90px;flex:1;border-radius:14px"></div>
+        <div class="ui-shimmer" style="height:90px;flex:1;border-radius:14px"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:20px;border-radius:4px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+        <div class="ui-shimmer" style="height:90px;border-radius:12px"></div>
+      </div>
+    </div>
+    <div class="data-content">
+      <div class="top-bar-title" id="topBarTitle">Top 3 do mês</div>
+      <div class="top-bar" id="topBar"></div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+    </div>
   </div>
 
+  <script src="shared.js"></script>
   <script>
     const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
     const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -209,37 +201,13 @@
     const COLORS = ['#e8a832', '#4ade80', '#60a5fa', '#f472b6', '#a78bfa',
       '#f97316', '#06b6d4', '#84cc16', '#e879f9', '#fb7185']
 
-    const LIVE = location.pathname.startsWith('/live/')
-    const ADMIN = location.pathname.startsWith('/admin/')
-    const PAGE_PREFIX = LIVE ? '/live' : ADMIN ? '/admin' : ''
-
-    if (LIVE) {
-      const _fetch = window.fetch
-      window.fetch = function(url, opts) {
-        return _fetch(url, opts).then(res => {
-          if (res.status === 401) {
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Outfit,system-ui,sans-serif;background:#0a0b0f;color:#e8e6e1;margin:0"><div style="text-align:center;padding:48px;border-radius:16px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);max-width:400px"><h1 style="font-size:1.4rem;margin-bottom:12px;color:#e8a832">Acesso expirado</h1><p style="color:#a09d95;font-size:0.9rem;line-height:1.5">O teu acesso expirou. Peça um novo link com <b>!live</b> no grupo.</p></div></div>'
-            throw new Error('unauthorized')
-          }
-          return res
-        })
-      }
-    }
-
-    const params = new URLSearchParams(location.search)
-    const groupId = params.get('id')
     if (!groupId) location.href = '/'
-    document.getElementById('backLink').href = `${PAGE_PREFIX}/group.html?id=${groupId}`
 
-    function localDate(d) {
-      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
-    }
-    function todayStr() { return localDate(new Date()) }
 
-    // --- current month state ---
+    // --- current month state (from URL or now) ---
     const now = new Date()
-    let currentYear = now.getFullYear()
-    let currentMonth = now.getMonth()
+    let currentYear = parseInt(params.get('year')) || now.getFullYear()
+    let currentMonth = params.has('month') ? parseInt(params.get('month')) - 1 : now.getMonth()
 
     function getMonthRange(year, month) {
       const first = new Date(year, month, 1)
@@ -253,8 +221,14 @@
     }
 
     // --- nav ---
-    document.getElementById('prevMonth').onclick = () => { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear-- }; loadCalendar() }
-    document.getElementById('nextMonth').onclick = () => { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++ }; loadCalendar() }
+    function updateUrl() {
+      const u = new URL(location.href)
+      u.searchParams.set('year', currentYear)
+      u.searchParams.set('month', currentMonth + 1)
+      history.replaceState(null, '', u)
+    }
+    document.getElementById('prevMonth').onclick = () => { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear-- }; updateUrl(); loadCalendar() }
+    document.getElementById('nextMonth').onclick = () => { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++ }; updateUrl(); loadCalendar() }
 
     // --- color map for senders ---
     const senderColorMap = new Map()
@@ -277,38 +251,23 @@
       const { start, end, firstDow, daysInMonth } = getMonthRange(currentYear, currentMonth)
       document.getElementById('monthLabel').textContent = `${MONTHS[currentMonth]} ${currentYear}`
 
-      const url = `${PAGE_PREFIX}/api/stats/daily-winners?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`
-      const res = await fetch(url, { cache: 'no-cache' })
-      const winners = await res.json()
-
-      // also get group name
-      const statsRes = await fetch(`${PAGE_PREFIX}/api/stats?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`, { cache: 'no-cache' })
-      const stats = await statsRes.json()
+      let winners, stats
+      try {
+        const [wRes, sRes] = await Promise.all([
+          fetch(`${PAGE_PREFIX}/api/stats/daily-winners?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`, { cache: 'no-cache' }),
+          fetch(`${PAGE_PREFIX}/api/stats?group=${encodeURIComponent(groupId)}&start=${start}&end=${end}`, { cache: 'no-cache' }),
+        ])
+        winners = await wRes.json()
+        stats = await sRes.json()
+      } catch (err) {
+        document.getElementById('calendarGrid').innerHTML = '<div style="grid-column:span 7;text-align:center;color:var(--text-muted);padding:40px 0">Erro ao carregar dados. Tente novamente.</div>'
+        return
+      }
       document.getElementById('title').textContent = stats.name
       document.title = `WABot — ${stats.name} — Calendário`
 
       const winnerMap = new Map(winners.map(w => [w.date, w]))
       const todayDate = todayStr()
-
-      // build legend: unique winners for this month
-      const uniqueWinners = new Map()
-      for (const w of winners) {
-        if (!uniqueWinners.has(w.sender)) {
-          uniqueWinners.set(w.sender, { name: w.name, count: 0 })
-        }
-        uniqueWinners.get(w.sender).count++
-      }
-      // sort by count desc
-      const legendItems = [...uniqueWinners.entries()]
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(([sender, info]) => {
-          const color = getColor(sender)
-          return `<div class="legend-item">
-            <div class="legend-avatar" style="background:${color}">${getInitials(info.name)}</div>
-            ${info.name.split(' ')[0]} <span class="legend-count">${info.count} dia${info.count > 1 ? 's' : ''}</span>
-          </div>`
-        })
-      document.getElementById('legend').innerHTML = legendItems.join('')
 
       // build grid
       let html = DAYS.map(d => `<div class="cal-header">${d}</div>`).join('')
@@ -328,7 +287,7 @@
             <div class="cal-day has-data${isToday ? ' today' : ''}">
               <div class="cal-date">${day}</div>
               <div class="cal-avatar" style="background:${color}">${getInitials(winner.name)}</div>
-              <div class="cal-name" title="${winner.name}">${winner.name.split(' ')[0]}</div>
+              <div class="cal-name" title="${esc(winner.name)}">${esc(winner.name.split(' ')[0])}</div>
               <div class="cal-count">${winner.total} ativ</div>
             </div>`
         } else {
@@ -340,9 +299,30 @@
       }
 
       document.getElementById('calendarGrid').innerHTML = html
+
+      // --- top 3 bar ---
+      const RANK_LABELS = ['1º lugar', '2º lugar', '3º lugar']
+      const top3 = stats.rows.slice(0, 3)
+      let topHtml = ''
+      top3.forEach((u, i) => {
+        const color = getColor(u.sender)
+        topHtml += `
+          <div class="top-card">
+            <div class="top-rank top-rank--${i + 1}">${RANK_LABELS[i]}</div>
+            <div class="top-avatar" style="background:${color}">${getInitials(u.name)}</div>
+            <div class="top-name" title="${esc(u.name)}">${esc(u.name)}</div>
+            <div class="top-count">${u.count}</div>
+            <div class="top-label">atividades</div>
+          </div>`
+      })
+      document.getElementById('topBarTitle').style.display = top3.length ? '' : 'none'
+      document.getElementById('topBar').innerHTML = topHtml
+
+      requestAnimationFrame(() => document.body.classList.add('loaded'))
     }
 
     loadCalendar()
+    initPullToRefresh(loadCalendar)
   </script>
 </body>
 </html>

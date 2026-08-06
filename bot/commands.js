@@ -4,7 +4,7 @@ const contacts = require('./contacts')
 const gemini = require('./gemini')
 const football = require('./football')
 const settings = require('./settings')
-const { open } = require('./db')
+const { sql } = require('./db')
 
 const LIVE_DOMAIN = process.env.LIVE_DOMAIN || 'http://localhost:3000'
 
@@ -13,8 +13,8 @@ const commands = {
     description: 'Lista os comandos disponíveis',
     usage: '/bot help',
     aliases: ['ajuda'],
-    handler(groupId, sender, args, alias, parsed) {
-      const disabled = settings.getDisabledCommands(groupId)
+    async handler(groupId, sender, args, alias, parsed) {
+      const disabled = await settings.getDisabledCommands(groupId)
       const botName = parsed?.botName || 'bot'
       const prefix = parsed?.prefix || '/'
       const lines = ['*Comandos disponíveis:*']
@@ -28,63 +28,85 @@ const commands = {
   },
 
   stats: {
-    description: 'Ranking de mensagens do grupo',
-    usage: '/bot stats [hoje|semana|mes|dia|periodo]',
+    description: 'Top 3 do grupo (últimos dias, mês ou ano)',
+    usage: '/bot rank [7|15|21 dias | mes | ano]',
     aliases: ['rank', 'ranking' , 'offline'],
-    handler(groupId, sender, args) {
-      const sub = (args[0] || 'hoje').toLowerCase()
-      const DAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+    _dailyUsage: new Map(),
+    async handler(groupId, sender, args) {
+      const TZ = process.env.TZ || 'Europe/Lisbon'
       const medals = ['🥇', '🥈', '🥉']
+      const fmt = (d) => d.toLocaleDateString('pt-BR', { timeZone: TZ })
 
-      function formatRanking(title, data) {
-        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1])
-        if (sorted.length === 0) return 'Ainda não há dados suficientes.'
+      // rate limit: 2x por dia por pessoa por grupo
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ })
+      const key = `${groupId}:${sender}:${today}`
+      const usage = commands.stats._dailyUsage
+      // limpar entradas de dias anteriores
+      for (const k of usage.keys()) {
+        if (!k.endsWith(`:${today}`)) usage.delete(k)
+      }
+      const count = usage.get(key) || 0
+      if (count >= 2) {
+        const ironias = [
+          'Calma, fiscal do ranking. Só 2x por dia. Vai viver a vida que o ranking não muda a cada 5 minutos.',
+          'De novo? O ranking não vai mudar só porque estás a olhar para ele. 2x por dia, campeão.',
+          'Já gastaste as tuas 2 consultas de hoje. Relaxa, ninguém está a pensar em ti tanto quanto tu achas.',
+          'Limite atingido. Dica: se estás tão preocupado com a tua posição, experimenta mandar mais mensagens em vez de ficar a verificar o ranking.',
+          'Só 2x por dia, amigo. O ranking não é espelho — não precisa de ser consultado a toda a hora.',
+        ]
+        return ironias[Math.floor(Math.random() * ironias.length)]
+      }
+
+      async function formatTop3(title, data) {
+        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        if (sorted.length === 0) return `\`\`\` ${title}\n  Ainda não há dados suficientes.\n\`\`\``
+        const names = await Promise.all(sorted.map(([user]) => contacts.getName(user)))
         const lines = [`\`\`\` ${title}`]
-        sorted.forEach(([user, count], i) => {
-          const name = contacts.getName(user)
-          const prefix = medals[i] || `${i + 1}.`
-          lines.push(`  ${prefix} ${name} - ${count} msg`)
+        sorted.forEach(([, count], i) => {
+          lines.push(`  ${medals[i]} ${names[i]} - ${count} msg`)
         })
         lines.push('```')
         return lines.join('\n')
       }
 
-      if (sub === 'hoje') {
-        return formatRanking('Ranking de hoje:', stats.getToday(groupId))
+      const usageMsg = 'Uso: !rank [7|15|21] dias | mes | <ano>\n\nExemplos:\n  !rank 7 dias   — últimos 7 dias\n  !rank 15 dias  — últimos 15 dias\n  !rank 21 dias  — últimos 21 dias\n  !rank mes      — mês atual\n  !rank 2026     — top 3 do ano'
+
+      // !rank X dias (7, 15 ou 21)
+      if (args.length === 2 && /^(7|15|21)$/.test(args[0]) && args[1].toLowerCase() === 'dias') {
+        usage.set(key, count + 1)
+        const days = parseInt(args[0], 10)
+        const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
+        const start = new Date(now)
+        start.setDate(now.getDate() - days)
+        const title = `Ranking dos últimos ${days} dias (${fmt(start)} → ${fmt(now)})`
+        return formatTop3(title, await stats.getRanking(groupId, days))
       }
 
-      if (sub === 'semana') {
-        return formatRanking('Ranking da semana (Dom-Sáb):', stats.getWeek(groupId))
+      // !rank mes → mês corrente
+      if (args.length === 1 && /^m[eê]s$/i.test(args[0])) {
+        usage.set(key, count + 1)
+        const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
+        const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+        const title = `Ranking de ${monthNames[now.getMonth()]} ${now.getFullYear()}`
+        return formatTop3(title, await stats.getMonth(groupId))
       }
 
-      if (sub === 'mes') {
-        return formatRanking('Ranking do mês (30 dias):', stats.getMonth(groupId))
+      // !rank <ano>
+      if (args.length === 1 && /^\d{4}$/.test(args[0])) {
+        usage.set(key, count + 1)
+        const year = parseInt(args[0], 10)
+        const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
+        const currentYear = now.getFullYear()
+        if (year < 2020 || year > currentYear) {
+          return `Ano inválido. Use um ano entre 2020 e ${currentYear}.`
+        }
+        const start = new Date(`${year}-01-01T00:00:00`)
+        const end = year === currentYear ? now : new Date(`${year}-12-31T00:00:00`)
+        const title = `Ranking de ${year} (${fmt(start)} → ${fmt(end)})`
+        return formatTop3(title, await stats.getYear(groupId, year))
       }
 
-      if (sub === 'dia') {
-        const rows = stats.getBusiestDay(groupId)
-        if (rows.length === 0) return 'Ainda não há dados suficientes.'
-        const lines = ['``` Dias mais ativos (últimos 7 dias):']
-        rows.forEach((r) => {
-          lines.push(`  ${DAYS[r.day_of_week]} - ${r.total} msg`)
-        })
-        lines.push('```')
-        return lines.join('\n')
-      }
-
-      if (sub === 'periodo') {
-        const rows = stats.getBusiestPeriod(groupId)
-        if (rows.length === 0) return 'Ainda não há dados suficientes.'
-        const labels = { manha: 'Manhã (6h-17h59)', noite: 'Noite (18h-05h59)' }
-        const lines = ['``` Períodos mais ativos (últimos 7 dias):']
-        rows.forEach((r) => {
-          lines.push(`  ${labels[r.period]} - ${r.total} msg`)
-        })
-        lines.push('```')
-        return lines.join('\n')
-      }
-
-      return 'Uso: /bot stats [hoje|semana|mes|dia|periodo]'
+      return usageMsg
     },
   },
 
@@ -113,7 +135,7 @@ const commands = {
       if (args.length === 0) return 'Uso: /bot parabens @pessoa'
       const raw = args.join(' ')
       const name = raw.replace(/@(\d+)/g, (_, num) => {
-        return contacts.getName(`${num}@s.whatsapp.net`)
+        return num
       }).replace(/@/g, '')
       try {
         const reply = await gemini.ask(`Cria uma mensagem de parabéns de aniversário para ${name}`, 'parabens', alias)
@@ -151,7 +173,7 @@ const commands = {
     aliases: ['perfil'],
     slow: true,
     async handler(groupId, sender, args, alias) {
-            try {
+      try {
         const reply = await gemini.ask('', 'profile', alias)
         return String(reply).trim() || 'Não consegui gerar o perfil. Tenta novamente.'
       } catch (err) {
@@ -232,22 +254,22 @@ const commands = {
     description: 'Gera link para ver ranking e gráficos do grupo',
     usage: '/bot live',
     aliases: ['live', 'aovivo', 'online', 'zaprats'],
-    handler(groupId, sender, args) {
-      const db = open()
+    async handler(groupId, sender, args) {
       const token = uuidv4()
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
 
       // invalidate previous tokens for this group
-      db.prepare('DELETE FROM live_tokens WHERE group_id = ?').run(groupId)
+      await sql`DELETE FROM live_tokens WHERE group_id = ${groupId}`
 
-      db.prepare('INSERT INTO live_tokens (token, group_id, created_by, expires_at) VALUES (?, ?, ?, ?)')
-        .run(token, groupId, sender, expiresAt)
-      db.close()
+      await sql`
+        INSERT INTO live_tokens (token, group_id, created_by, expires_at)
+        VALUES (${token}, ${groupId}, ${sender}, ${expiresAt})
+      `
 
       const link = `${LIVE_DOMAIN}/auth/${token}`
       return {
-        privateMessage: `Aqui está o seu link de acesso para o ZapRats 📱🐀:\n\n${link}\n\n⏳ Válido por 24 horas\n🔒 Use apenas uma vez`,
-        groupReply: 'Link do ZapRat enviado no privado.',
+        privateMessage: `Aqui está o seu link para o Group Usage Report:\n\n${link}\n\n⏳ Válido por 24 horas`,
+        groupReply: 'Link enviado no privado.',
       }
     },
   },
@@ -262,18 +284,34 @@ const commands = {
       return { pendingLocation: true, query: args.join(' ') }
     },
   },
+
+  transcript: {
+    description: 'Transcreve áudio para texto',
+    usage: '/bot transcript (responda a um áudio)',
+    aliases: ['transcript', 'transcricao'],
+    slow: true,
+    handler() { return null },
+  },
+
+  resumo: {
+    description: 'Resume um artigo a partir de um link',
+    usage: '/bot resumo <link>',
+    aliases: ['resumo', 'resumir'],
+    slow: true,
+    premium: true,
+    handler() { return null },
+  },
 }
 
 // constrói mapa de aliases a partir das definições dos comandos
 function buildAliasMap() {
   const map = {}
   for (const [name, cmd] of Object.entries(commands)) {
-    if (cmd.aliases) {
-      for (const alias of cmd.aliases) {
-        const base = alias.replace(/^[\/!]/, '')
-        map[`/${base}`] = `/bot ${name}`
-        map[`!${base}`] = `!bot ${name}`
-      }
+    const names = new Set([name, ...(cmd.aliases || [])])
+    for (const alias of names) {
+      const base = alias.replace(/^[\/!]/, '')
+      map[`/${base}`] = `/bot ${name}`
+      map[`!${base}`] = `!bot ${name}`
     }
   }
   return map
@@ -282,22 +320,20 @@ function buildAliasMap() {
 const aliasMap = buildAliasMap()
 
 function parse(text) {
-  // resolve alias (longest match first to avoid partial collisions like !fut matching !futebol)
-  let resolved = text
+  // normalize punctuation after command/alias (e.g. "!ai, pergunta" -> "!ai pergunta")
+  let normalized = text.replace(/^([\/!][\w\u00C0-\u024F]+)[,;:]\s*/, '$1 ')
+
+  let resolved = normalized
   let alias = null
   const sortedAliases = Object.entries(aliasMap).sort((a, b) => b[0].length - a[0].length)
   for (const [a, expansion] of sortedAliases) {
-    if (text.toLowerCase().startsWith(a + ' ') || text.toLowerCase() === a) {
+    if (normalized.toLowerCase().startsWith(a + ' ') || normalized.toLowerCase() === a) {
       alias = a.replace(/^[\/!]/, '')
-      resolved = expansion + text.slice(a.length)
+      resolved = expansion + normalized.slice(a.length)
       break
     }
   }
 
-  // remove pontuação colada ao alias (ex: "!leco, texto" -> "!bot ai texto")
-  resolved = resolved.replace(/^([\/!]\w+)[,;:]\s*/, '$1 ')
-
-  // suporta aliases do nome do bot (config.botAliases)
   const config = loadConfig()
   const botNames = (config.botAliases || ['bot']).join('|')
   const botRegex = new RegExp(`^[\/!](${botNames})\\s+([\\w\\u00C0-\\u024F]+)[,;:]?\\s*(.*)$`, 'i')
@@ -321,14 +357,13 @@ async function execute(groupId, sender, text) {
   const parsed = parse(text)
   if (!parsed) return null
 
-  if (settings.isTroll(groupId)) {
-    const trollResponses = ['𓀐𓂸', 'ूाीू', 'ε⥰']
+  if (await settings.isTroll(groupId)) {
+    const trollResponses = ['𓀐𓂸', 'ูาีู', 'ε⥰']
     return trollResponses[Math.floor(Math.random() * trollResponses.length)]
   }
 
-  const disabled = settings.getDisabledCommands(groupId)
+  const disabled = await settings.getDisabledCommands(groupId)
 
-  // comando desabilitado — mostra help
   if (disabled.includes(parsed.command) || (parsed.alias && disabled.includes(parsed.alias))) {
     return commands.help.handler(groupId, sender, [])
   }
@@ -346,15 +381,14 @@ async function execute(groupId, sender, text) {
   return result
 }
 
-function isSlow(text, groupId) {
+async function isSlow(text, groupId) {
   const parsed = parse(text)
   if (!parsed) return false
   const cmd = commands[parsed.command]
   if (!cmd || !cmd.slow) return false
 
-  // don't show loading for disabled commands
   if (groupId) {
-    const disabled = settings.getDisabledCommands(groupId)
+    const disabled = await settings.getDisabledCommands(groupId)
     if (disabled.includes(parsed.command) || (parsed.alias && disabled.includes(parsed.alias))) {
       return false
     }
@@ -363,7 +397,7 @@ function isSlow(text, groupId) {
   return true
 }
 
-function isTroll(groupId) {
+async function isTroll(groupId) {
   return settings.isTroll(groupId)
 }
 

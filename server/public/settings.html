@@ -2,110 +2,43 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
   <title>WABot — Definições</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
   <style>
-    *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
-
     :root {
-      --bg: #0a0b0f;
-      --surface: rgba(255,255,255,0.035);
-      --surface-raised: rgba(255,255,255,0.055);
-      --border: rgba(255,255,255,0.06);
-      --border-accent: rgba(232,168,50,0.2);
-      --text: #e8e6e1;
-      --text-secondary: #a09d95;
-      --text-muted: #5a574f;
-      --accent: #e8a832;
-      --accent-soft: rgba(232,168,50,0.12);
       --green: #4ade80;
       --green-soft: rgba(74,222,128,0.12);
       --red: #ef4444;
       --red-soft: rgba(239,68,68,0.12);
-      --font-display: 'Bricolage Grotesque', serif;
-      --font-body: 'Outfit', sans-serif;
     }
 
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      overflow-x: hidden;
+    .container {
+      max-width: 700px;
     }
 
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none;
-      z-index: 9999;
-    }
-
-    .bg-glow {
-      position: fixed;
-      border-radius: 50%;
-      filter: blur(150px);
-      pointer-events: none;
-      z-index: 0;
-    }
     .bg-glow--1 {
-      width: 500px; height: 500px;
       top: -150px; left: -80px;
       background: #4a2d7a;
       opacity: 0.1;
     }
     .bg-glow--2 {
-      width: 400px; height: 400px;
       bottom: -100px; right: -120px;
       background: var(--accent);
       opacity: 0.06;
     }
 
-    .container {
-      position: relative;
-      z-index: 1;
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 32px 20px 80px;
-    }
-
-    /* --- nav --- */
-    .nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 32px;
-      opacity: 0;
-      animation: fadeUp 0.5s ease forwards;
-    }
-
-    .back-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.82rem;
-      font-weight: 500;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      transition: color 0.2s;
-    }
-    .back-link:hover { color: var(--accent); }
-    .back-link svg { width: 16px; height: 16px; }
-
     /* --- header --- */
-    .page-header {
-      margin-bottom: 36px;
-      opacity: 0;
-      animation: fadeUp 0.5s ease 0.1s forwards;
-    }
-
     .page-title {
       font-family: var(--font-display);
       font-weight: 800;
@@ -241,140 +174,6 @@
       display: block;
     }
 
-    .setting-section {
-      margin-bottom: 20px;
-    }
-
-    .setting-section:last-child {
-      margin-bottom: 0;
-    }
-
-    .setting-section-title {
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 0.72rem;
-      letter-spacing: 1.2px;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-
-    /* --- toggle --- */
-    .toggle-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 0;
-    }
-
-    .toggle-row + .toggle-row {
-      border-top: 1px solid var(--border);
-    }
-
-    .toggle-label {
-      font-size: 0.88rem;
-      font-weight: 500;
-    }
-
-    .toggle-desc {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 2px;
-    }
-
-    .toggle {
-      position: relative;
-      width: 44px;
-      height: 24px;
-      flex-shrink: 0;
-    }
-
-    .toggle input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .toggle-track {
-      position: absolute;
-      inset: 0;
-      background: rgba(255,255,255,0.08);
-      border-radius: 12px;
-      cursor: pointer;
-      transition: background 0.25s;
-    }
-
-    .toggle-track::after {
-      content: '';
-      position: absolute;
-      top: 3px;
-      left: 3px;
-      width: 18px;
-      height: 18px;
-      background: var(--text-muted);
-      border-radius: 50%;
-      transition: transform 0.25s, background 0.25s;
-    }
-
-    .toggle input:checked + .toggle-track {
-      background: var(--green-soft);
-    }
-
-    .toggle input:checked + .toggle-track::after {
-      transform: translateX(20px);
-      background: var(--green);
-    }
-
-    /* troll toggle uses red */
-    .toggle.troll input:checked + .toggle-track {
-      background: var(--red-soft);
-    }
-
-    .toggle.troll input:checked + .toggle-track::after {
-      background: var(--red);
-    }
-
-    /* command disabled toggle uses accent */
-    .toggle.cmd input:checked + .toggle-track {
-      background: var(--accent-soft);
-    }
-
-    .toggle.cmd input:checked + .toggle-track::after {
-      background: var(--accent);
-    }
-
-    /* --- commands grid --- */
-    .cmd-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .cmd-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      border-radius: 8px;
-    }
-
-    .cmd-row:nth-child(odd) {
-      background: rgba(255,255,255,0.02);
-    }
-
-    .cmd-name {
-      font-family: var(--font-body);
-      font-weight: 600;
-      font-size: 0.85rem;
-      letter-spacing: 0.3px;
-    }
-
-    .cmd-desc {
-      font-size: 0.73rem;
-      color: var(--text-muted);
-      margin-top: 1px;
-    }
-
     /* --- metrics panel --- */
     .metrics-panel {
       background: var(--surface);
@@ -443,39 +242,6 @@
       padding: 12px 0;
     }
 
-    /* --- empty / loading --- */
-    .empty {
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.88rem;
-      padding: 60px 20px;
-    }
-
-    .loading {
-      display: flex;
-      justify-content: center;
-      padding: 60px 0;
-    }
-    .loading-dot {
-      width: 8px; height: 8px;
-      background: var(--accent);
-      border-radius: 50%;
-      margin: 0 4px;
-      animation: pulse 1.2s ease infinite;
-    }
-    .loading-dot:nth-child(2) { animation-delay: 0.15s; }
-    .loading-dot:nth-child(3) { animation-delay: 0.3s; }
-
-    @keyframes pulse {
-      0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
-      40% { opacity: 1; transform: scale(1); }
-    }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(16px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
     /* --- toast --- */
     .toast {
       position: fixed;
@@ -501,8 +267,65 @@
       opacity: 1;
     }
 
+    /* --- search --- */
+    .search-bar { margin-bottom: 16px; }
+    .search-input {
+      width: 100%;
+      font-family: var(--font-body); font-size: 0.88rem;
+      padding: 10px 16px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); outline: none; transition: border-color 0.2s;
+    }
+    .search-input:focus { border-color: var(--border-accent); }
+    .search-input::placeholder { color: var(--text-muted); }
+
+    /* --- pagination --- */
+    .pagination {
+      display: flex; justify-content: center; align-items: center;
+      gap: 8px; margin-top: 20px; padding-bottom: 20px;
+    }
+    .page-btn {
+      font-family: var(--font-body); font-size: 0.78rem; font-weight: 500;
+      padding: 6px 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
+    }
+    .page-btn:hover { border-color: var(--border-accent); color: var(--text); }
+    .page-btn.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); font-weight: 600; }
+    .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .page-info { font-size: 0.75rem; color: var(--text-muted); }
+
+    /* --- premium users --- */
+    .premium-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;
+      background: var(--surface); border: 1px solid var(--border);
+      margin: 2px 4px 2px 0;
+    }
+    .premium-chip.global { border-color: var(--border-accent); color: var(--accent); }
+    .premium-chip button {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 0.9rem; padding: 0 2px; transition: color 0.2s;
+    }
+    .premium-chip button:hover { color: #ef4444; }
+
+    .autocomplete-list {
+      position: absolute; left: 0; right: 0; bottom: 100%;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      max-height: 180px; overflow-y: auto; z-index: 1000; display: none;
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.4);
+    }
+    .autocomplete-list.open { display: block; }
+    .ac-item {
+      padding: 8px 12px; cursor: pointer; font-size: 0.82rem;
+      display: flex; justify-content: space-between; align-items: center;
+      transition: background 0.15s;
+    }
+    .ac-item:hover { background: var(--surface); }
+    .ac-item-name { color: var(--text); }
+    .ac-item-jid { color: var(--text-muted); font-size: 0.7rem; }
+
     @media (max-width: 480px) {
-      .container { padding: 24px 16px 60px; }
       .group-header { padding: 14px 16px; }
       .group-detail { padding: 14px 16px; }
     }
@@ -513,12 +336,6 @@
   <div class="bg-glow bg-glow--2"></div>
 
   <div class="container">
-    <nav class="nav">
-      <a class="back-link" href="/">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-        Grupos
-      </a>
-    </nav>
 
     <div class="page-header">
       <h1 class="page-title">Definições</h1>
@@ -530,6 +347,10 @@
       <div class="metrics-offline">A carregar...</div>
     </div>
 
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Pesquisar grupo..." class="search-input">
+    </div>
+
     <div class="group-list" id="list">
       <div class="loading">
         <div class="loading-dot"></div>
@@ -537,13 +358,38 @@
         <div class="loading-dot"></div>
       </div>
     </div>
+
+    <div class="pagination" id="pagination"></div>
   </div>
 
   <div class="toast" id="toast"></div>
 
+  <script src="shared.js"></script>
   <script>
+    const singleGroupMode = !!groupId
+
     let allCommands = []
+    let allGroups = []
     let openCardId = null
+    let searchQuery = ''
+    let currentPage = 1
+    const PAGE_SIZE = 10
+
+    if (singleGroupMode) {
+      document.getElementById('searchInput')?.parentElement?.remove()
+      document.getElementById('metrics')?.remove()
+      const header = document.querySelector('.page-header')
+      if (header) {
+        header.querySelector('.page-title').textContent = 'Definições do grupo'
+        header.querySelector('.page-subtitle').textContent = ''
+      }
+    }
+
+    document.getElementById('searchInput')?.addEventListener('input', (e) => {
+      searchQuery = e.target.value.toLowerCase().trim()
+      currentPage = 1
+      renderGroups()
+    })
 
     // --- metrics ---
     function formatUptime(secs) {
@@ -624,6 +470,8 @@
       document.querySelectorAll('.group-card').forEach(card => {
         card.classList.toggle('open', card.dataset.id === openCardId)
       })
+      if (openCardId === '__global__') loadGlobalPremiumUsers()
+      else if (openCardId) loadPremiumUsers(openCardId)
     }
 
     async function toggleListening(groupId, checked) {
@@ -647,6 +495,144 @@
     async function toggleCommand(groupId, cmd, enabledChecked) {
       await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/commands/${encodeURIComponent(cmd)}`, { disabled: !enabledChecked })
       showToast(enabledChecked ? `${cmd} ativado` : `${cmd} desativado`)
+    }
+
+    function updateTranscriptLimit(groupId, value) {
+      debounce(`limit:${groupId}`, async () => {
+        const limit = parseInt(value)
+        if (isNaN(limit) || limit < 0 || limit > 1000) return
+        await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/transcript-limit`, { limit })
+        showToast(`Limite de transcrições: ${limit}/dia`)
+      })
+    }
+
+    function updateTranscriptMaxSeconds(groupId, value) {
+      debounce(`maxSec:${groupId}`, async () => {
+        const seconds = parseInt(value)
+        if (isNaN(seconds) || seconds < 1 || seconds > 3600) return
+        await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/transcript-max-seconds`, { seconds })
+        showToast(`Duração máxima: ${seconds}s`)
+      })
+    }
+
+    let allContacts = null
+
+    async function loadContacts() {
+      if (allContacts) return allContacts
+      allContacts = await api('GET', '/api/config/contacts')
+      return allContacts
+    }
+
+    async function loadPremiumUsers(groupId) {
+      try {
+        const data = await api('GET', `/api/config/groups/${encodeURIComponent(groupId)}/premium-users`)
+        const el = document.getElementById(`premium-list-${groupId}`)
+        if (!el) return
+
+        const users = data
+        const chips = users.map(u =>
+          `<span class="premium-chip">${esc(u.name)} <button data-group="${groupId}" data-sender="${u.sender}" class="remove-premium">&times;</button></span>`
+        )
+
+        el.innerHTML = chips.length
+          ? chips.join('')
+          : '<span style="color:var(--text-muted);font-size:0.78rem">Nenhum usuário premium</span>'
+
+        el.querySelectorAll('.remove-premium').forEach(btn => {
+          btn.addEventListener('click', () => removePremiumUser(btn.dataset.group, btn.dataset.sender))
+        })
+
+        // setup autocomplete (exclude existing users)
+        const existingSenders = users.map(u => u.sender)
+        setupAutocomplete(groupId, existingSenders)
+      } catch (err) {
+        console.error('Failed to load premium users', err)
+      }
+    }
+
+    async function setupAutocomplete(groupId, existingSenders, isGlobal = false) {
+      const contacts = await loadContacts()
+      const input = document.getElementById(`premium-input-${groupId}`)
+      const list = document.getElementById(`premium-ac-${groupId}`)
+      if (!input || !list) return
+
+      const existingSet = new Set(existingSenders)
+
+      input.addEventListener('input', () => {
+        const q = input.value.toLowerCase().trim()
+        if (q.length < 2) { list.classList.remove('open'); return }
+
+        const matches = contacts
+          .filter(c => !existingSet.has(c.jid) && c.name.toLowerCase().includes(q))
+          .slice(0, 8)
+
+        if (matches.length === 0) { list.classList.remove('open'); return }
+
+        list.innerHTML = matches.map(c =>
+          `<div class="ac-item" data-jid="${c.jid}">
+            <span class="ac-item-name">${esc(c.name)}</span>
+            <span class="ac-item-jid">${esc(c.jid)}</span>
+          </div>`
+        ).join('')
+        list.classList.add('open')
+      })
+
+      input.addEventListener('blur', () => {
+        setTimeout(() => list.classList.remove('open'), 200)
+      })
+
+      list.addEventListener('click', async (e) => {
+        const item = e.target.closest('.ac-item')
+        if (!item) return
+        const sender = item.dataset.jid
+        if (isGlobal) {
+          await api('POST', '/api/config/global/premium-users', { sender })
+          input.value = ''
+          list.classList.remove('open')
+          showToast('Utilizador premium global adicionado')
+          loadGlobalPremiumUsers()
+        } else {
+          await api('POST', `/api/config/groups/${encodeURIComponent(groupId)}/premium-users`, { sender })
+          input.value = ''
+          list.classList.remove('open')
+          showToast('Utilizador premium adicionado')
+          loadPremiumUsers(groupId)
+        }
+      })
+    }
+
+    async function removePremiumUser(groupId, sender) {
+      await api('DELETE', `/api/config/groups/${encodeURIComponent(groupId)}/premium-users/${encodeURIComponent(sender)}`)
+      showToast('Utilizador premium removido')
+      loadPremiumUsers(groupId)
+    }
+
+    async function loadGlobalPremiumUsers() {
+      try {
+        const users = await api('GET', '/api/config/global/premium-users')
+        const el = document.getElementById('premium-list-global')
+        if (!el) return
+
+        el.innerHTML = users.length
+          ? users.map(u =>
+              `<span class="premium-chip">${esc(u.name)} <button data-sender="${u.sender}" class="remove-global-premium">&times;</button></span>`
+            ).join('')
+          : '<span style="color:var(--text-muted);font-size:0.78rem">Nenhum utilizador premium global</span>'
+
+        el.querySelectorAll('.remove-global-premium').forEach(btn => {
+          btn.addEventListener('click', () => removeGlobalPremiumUser(btn.dataset.sender))
+        })
+
+        setupAutocomplete('global', users.map(u => u.sender), true)
+      } catch (err) {
+        console.error('Failed to load global premium users', err)
+      }
+    }
+
+    async function removeGlobalPremiumUser(sender) {
+      await api('DELETE', `/api/config/global/premium-users/${encodeURIComponent(sender)}`)
+      showToast('Utilizador premium global removido')
+      loadGlobalPremiumUsers()
     }
 
     function renderGlobalCard(data) {
@@ -673,7 +659,7 @@
                   return `
                     <div class="cmd-row">
                       <div>
-                        <div class="cmd-name">${cmd.name}</div>
+                        <div class="cmd-name">${esc(cmd.name)}</div>
                         <div class="cmd-desc">${cmd.description}</div>
                       </div>
                       <label class="toggle cmd">
@@ -684,88 +670,173 @@
                 }).join('')}
               </div>
             </div>
+            <div class="setting-section">
+              <div class="setting-section-title">Utilizadores Premium — todos os grupos</div>
+              <div class="toggle-desc" style="margin-bottom:8px">Estes utilizadores têm acesso premium em todos os grupos</div>
+              <div class="premium-list" id="premium-list-global">A carregar...</div>
+              <div style="position:relative;margin-top:8px">
+                <input type="text" class="search-input" id="premium-input-global" placeholder="Pesquisar contacto..." autocomplete="off" style="padding:6px 10px;font-size:0.8rem">
+                <div class="autocomplete-list" id="premium-ac-global"></div>
+              </div>
+            </div>
           </div>
         </div>`
     }
 
-    async function load() {
-      const data = await api('GET', '/api/config/groups')
-      allCommands = data.commands
-      const container = document.getElementById('list')
+    let cachedData = null
 
-      if (data.groups.length === 0 && allCommands.length === 0) {
-        container.innerHTML = '<div class="empty">Nenhum grupo encontrado. O bot precisa de estar conectado ao WhatsApp para sincronizar os grupos.</div>'
+    async function load() {
+      cachedData = await api('GET', '/api/config/groups')
+      allCommands = cachedData.commands
+      allGroups = cachedData.groups
+
+      if (singleGroupMode) {
+        allGroups = allGroups.filter(g => g.uuid === groupId)
+        if (allGroups.length > 0) {
+          openCardId = allGroups[0].id
+          setTimeout(() => loadPremiumUsers(openCardId), 100)
+        }
+      }
+
+      if (allGroups.length === 0 && allCommands.length === 0) {
+        document.getElementById('list').innerHTML = '<div class="empty">Nenhum grupo encontrado. O bot precisa de estar conectado ao WhatsApp para sincronizar os grupos.</div>'
         return
       }
 
-      const globalHtml = renderGlobalCard(data)
+      renderGroups()
+    }
 
-      container.innerHTML = globalHtml + data.groups.map((g, i) => {
-        const disabledSet = new Set(g.disabled_commands)
-        const avatarClass = g.listening ? 'listening' : 'muted'
-        const initial = (g.name || '?')[0].toUpperCase()
+    function renderGroups() {
+      const container = document.getElementById('list')
+      const filtered = searchQuery
+        ? allGroups.filter(g => g.name.toLowerCase().includes(searchQuery))
+        : allGroups
 
-        let badges = ''
-        if (g.listening) badges += '<span class="badge badge-listening">Ativo</span>'
-        if (g.troll_mode) badges += '<span class="badge badge-troll">Troll</span>'
-        if (g.disabled_commands.length > 0) badges += `<span class="badge badge-disabled">${g.disabled_commands.length} cmd off</span>`
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+      if (currentPage > totalPages) currentPage = totalPages
+      const start = (currentPage - 1) * PAGE_SIZE
+      const page = filtered.slice(start, start + PAGE_SIZE)
 
-        return `
-          <div class="group-card${openCardId === g.id ? ' open' : ''}" data-id="${g.id}" style="animation-delay:${0.15 + i * 0.05}s">
-            <div class="group-header" onclick="toggleCard('${g.id}')">
-              <div class="group-avatar ${avatarClass}">${initial}</div>
-              <div class="group-info">
-                <div class="group-name">${g.name}</div>
-                <div class="group-badges">${badges || '<span class="badge badge-disabled">Inativo</span>'}</div>
-              </div>
-              <span class="group-expand">&#9656;</span>
+      const globalHtml = !searchQuery ? renderGlobalCard(cachedData) : ''
+
+      container.innerHTML = globalHtml + (page.length === 0
+        ? '<div class="empty">Nenhum grupo encontrado</div>'
+        : page.map((g, i) => renderGroupCard(g, i)).join(''))
+
+      renderPagination(filtered.length, totalPages)
+    }
+
+    function renderGroupCard(g, i) {
+      const disabledSet = new Set(g.disabled_commands)
+      const avatarClass = g.listening ? 'listening' : 'muted'
+      const initial = (g.name || '?')[0].toUpperCase()
+
+      let badges = ''
+      if (g.listening) badges += '<span class="badge badge-listening">Ativo</span>'
+      if (g.troll_mode) badges += '<span class="badge badge-troll">Troll</span>'
+      if (g.disabled_commands.length > 0) badges += `<span class="badge badge-disabled">${g.disabled_commands.length} cmd off</span>`
+
+      return `
+        <div class="group-card${openCardId === g.id ? ' open' : ''}" data-id="${g.id}">
+          <div class="group-header" onclick="toggleCard('${g.id}')">
+            <div class="group-avatar ${avatarClass}">${initial}</div>
+            <div class="group-info">
+              <div class="group-name">${esc(g.name)}</div>
+              <div class="group-badges">${badges || '<span class="badge badge-disabled">Inativo</span>'}</div>
             </div>
-            <div class="group-detail">
-              <div class="setting-section">
-                <div class="setting-section-title">Geral</div>
-                <div class="toggle-row">
-                  <div>
-                    <div class="toggle-label">Escuta ativa</div>
-                    <div class="toggle-desc">O bot processa mensagens e comandos deste grupo</div>
-                  </div>
-                  <label class="toggle">
-                    <input type="checkbox" ${g.listening ? 'checked' : ''} onchange="toggleListening('${g.id}', this.checked)">
-                    <span class="toggle-track"></span>
-                  </label>
+            <span class="group-expand">&#9656;</span>
+          </div>
+          <div class="group-detail">
+            <div class="setting-section">
+              <div class="setting-section-title">Geral</div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Escuta ativa</div>
+                  <div class="toggle-desc">O bot processa mensagens e comandos deste grupo</div>
                 </div>
-                <div class="toggle-row">
-                  <div>
-                    <div class="toggle-label">Troll mode</div>
-                    <div class="toggle-desc">Comandos devolvem respostas troll em vez de resultados reais</div>
-                  </div>
-                  <label class="toggle troll">
-                    <input type="checkbox" ${g.troll_mode ? 'checked' : ''} onchange="toggleTroll('${g.id}', this.checked)">
-                    <span class="toggle-track"></span>
-                  </label>
-                </div>
+                <label class="toggle">
+                  <input type="checkbox" ${g.listening ? 'checked' : ''} onchange="toggleListening('${g.id}', this.checked)">
+                  <span class="toggle-track"></span>
+                </label>
               </div>
-              <div class="setting-section">
-                <div class="setting-section-title">Comandos</div>
-                <div class="cmd-grid">
-                  ${allCommands.map(cmd => {
-                    const enabled = !disabledSet.has(cmd.name)
-                    return `
-                      <div class="cmd-row">
-                        <div>
-                          <div class="cmd-name">${cmd.name}</div>
-                          <div class="cmd-desc">${cmd.description}</div>
-                        </div>
-                        <label class="toggle cmd">
-                          <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleCommand('${g.id}', '${cmd.name}', this.checked)">
-                          <span class="toggle-track"></span>
-                        </label>
-                      </div>`
-                  }).join('')}
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Troll mode</div>
+                  <div class="toggle-desc">Comandos devolvem respostas troll em vez de resultados reais</div>
+                </div>
+                <label class="toggle troll">
+                  <input type="checkbox" ${g.troll_mode ? 'checked' : ''} onchange="toggleTroll('${g.id}', this.checked)">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Limite de transcrições</div>
+                  <div class="toggle-desc">Máximo de transcrições de áudio por utilizador/dia</div>
+                </div>
+                <input type="number" class="number-input" min="0" value="${g.transcript_daily_limit}"
+                  onchange="updateTranscriptLimit('${g.id}', this.value)">
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Duração máxima do áudio</div>
+                  <div class="toggle-desc">Máximo de segundos por áudio para transcrição</div>
+                </div>
+                <input type="number" class="number-input" min="1" value="${g.transcript_max_seconds}"
+                  onchange="updateTranscriptMaxSeconds('${g.id}', this.value)">
+              </div>
+            </div>
+            <div class="setting-section">
+              <div class="setting-section-title">Utilizadores Premium</div>
+              <div class="premium-users" id="premium-${g.id}">
+                <div class="toggle-desc" style="margin-bottom:8px">Utilizadores com acesso a funcionalidades premium (!resumo)</div>
+                <div class="premium-list" id="premium-list-${g.id}">A carregar...</div>
+                <div style="position:relative;margin-top:8px">
+                  <input type="text" class="search-input" id="premium-input-${g.id}" placeholder="Pesquisar contacto..." autocomplete="off" style="padding:6px 10px;font-size:0.8rem">
+                  <div class="autocomplete-list" id="premium-ac-${g.id}"></div>
                 </div>
               </div>
             </div>
-          </div>`
-      }).join('')
+            <div class="setting-section">
+              <div class="setting-section-title">Comandos</div>
+              <div class="cmd-grid">
+                ${allCommands.map(cmd => {
+                  const enabled = !disabledSet.has(cmd.name)
+                  return `
+                    <div class="cmd-row">
+                      <div>
+                        <div class="cmd-name">${esc(cmd.name)}</div>
+                        <div class="cmd-desc">${cmd.description}</div>
+                      </div>
+                      <label class="toggle cmd">
+                        <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleCommand('${g.id}', '${cmd.name}', this.checked)">
+                        <span class="toggle-track"></span>
+                      </label>
+                    </div>`
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        </div>`
+    }
+
+    function renderPagination(total, totalPages) {
+      const container = document.getElementById('pagination')
+      if (!container || singleGroupMode || totalPages <= 1) { if (container) container.innerHTML = ''; return }
+
+      let html = `<button class="page-btn" onclick="goPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>&larr;</button>`
+      for (let p = 1; p <= totalPages; p++) {
+        html += `<button class="page-btn${p === currentPage ? ' active' : ''}" onclick="goPage(${p})">${p}</button>`
+      }
+      html += `<button class="page-btn" onclick="goPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>&rarr;</button>`
+      html += `<span class="page-info">${total} grupo${total !== 1 ? 's' : ''}</span>`
+      container.innerHTML = html
+    }
+
+    function goPage(p) {
+      currentPage = p
+      renderGroups()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
     load()

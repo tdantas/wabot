@@ -6,10 +6,14 @@ wabot_domain: "wabot.okivia.net"
 wabot_gemini_api_key: "YOUR_GEMINI_API_KEY"
 wabot_football_api_key: "YOUR_FOOTBALL_API_KEY"
 wabot_jwt_secret: "CHANGE_ME_RANDOM_STRING"
+wabot_db_password: "CHANGE_ME_DB_PASSWORD"
 
 # Admin
 wabot_admin_email: "admin@example.com"
 wabot_admin_password: "changeme"
+
+# Widget API (for Scriptable/iPhone widget)
+# wabot_widget_api_key: "CHANGE_ME_RANDOM_STRING"
 
 # Optional overrides
 # wabot_port: 3001

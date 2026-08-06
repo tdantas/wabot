@@ -1,80 +1,52 @@
-const { open } = require('./db')
-
-const db = open()
+const { sql } = require('./db')
 
 const TZ = process.env.TZ || 'Europe/Lisbon'
 
-function now() {
-  const d = new Date()
-  const str = d.toLocaleString('en-CA', { timeZone: TZ, hour12: false })
-  const [datePart, timePart] = str.split(', ')
-  const hour = parseInt(timePart.split(':')[0], 10)
-  const day = new Date(datePart + 'T12:00:00').getDay()
-  return { date: datePart, dayOfWeek: day, period: (hour >= 6 && hour < 18) ? 'manha' : 'noite' }
+const ACTIVITY_TYPES = {
+  TEXT_MESSAGE: 'TEXT_MESSAGE',
+  MEDIA_MESSAGE: 'MEDIA_MESSAGE',
+  REACTION: 'REACTION',
+  READ: 'READ',
 }
 
-function daysAgo(n) {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toLocaleString('en-CA', { timeZone: TZ, hour12: false }).split(', ')[0]
-}
-
-function weekSunday() {
-  const d = new Date()
-  const localDate = new Date(d.toLocaleString('en-US', { timeZone: TZ }))
-  const day = localDate.getDay()
-  localDate.setDate(localDate.getDate() - day)
-  return localDate.toLocaleString('en-CA', { timeZone: TZ, hour12: false }).split(', ')[0]
-}
-
-// lazy prepared statements — só inicializa após migrations
-let _upsert, _queryRange, _queryBusiestDay, _queryBusiestPeriod, _queryWeekDaily, _queryWeekUserDaily
-
-function stmts() {
-  if (!_upsert) {
-    _upsert = db.prepare(`
-      INSERT INTO daily_stats (group_id, sender, date, day_of_week, period, count)
-      VALUES (?, ?, ?, ?, ?, 1)
-      ON CONFLICT (group_id, sender, date, period)
-      DO UPDATE SET count = count + 1
-    `)
-    _queryRange = db.prepare(`
-      SELECT sender, SUM(count) as count FROM daily_stats
-      WHERE group_id = ? AND date >= ?
-      GROUP BY sender ORDER BY count DESC
-    `)
-    _queryBusiestDay = db.prepare(`
-      SELECT day_of_week, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ?
-      GROUP BY day_of_week ORDER BY total DESC
-    `)
-    _queryBusiestPeriod = db.prepare(`
-      SELECT period, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ?
-      GROUP BY period ORDER BY total DESC
-    `)
-    _queryWeekDaily = db.prepare(`
-      SELECT date, day_of_week, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND date >= ?
-      GROUP BY date ORDER BY date
-    `)
-    _queryWeekUserDaily = db.prepare(`
-      SELECT date, day_of_week, SUM(count) as total FROM daily_stats
-      WHERE group_id = ? AND sender = ? AND date >= ?
-      GROUP BY date ORDER BY date
-    `)
+// Insert individual event into hypertable (idempotent via message_id)
+async function track(groupId, sender, activityType = ACTIVITY_TYPES.TEXT_MESSAGE, messageId = null, timestamp = null) {
+  const createdAt = timestamp ? new Date(timestamp * 1000) : new Date()
+  if (messageId) {
+    await sql`
+      INSERT INTO events (message_id, group_id, sender, activity_type, created_at)
+      SELECT ${messageId}, ${groupId}, ${sender}, ${activityType}, ${createdAt}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM events WHERE message_id = ${messageId}
+      )
+    `
+  } else {
+    await sql`
+      INSERT INTO events (group_id, sender, activity_type, created_at)
+      VALUES (${groupId}, ${sender}, ${activityType}, ${createdAt})
+    `
   }
-  return { upsert: _upsert, queryRange: _queryRange, queryBusiestDay: _queryBusiestDay, queryBusiestPeriod: _queryBusiestPeriod, queryWeekDaily: _queryWeekDaily, queryWeekUserDaily: _queryWeekUserDaily }
 }
 
-function track(groupId, sender) {
-  const { date, dayOfWeek, period } = now()
-  stmts().upsert.run(groupId, sender, date, dayOfWeek, period)
-}
+// --- query helpers (direct from events hypertable) ---
 
-function getRanking(groupId, days) {
-  const since = days === 0 ? now().date : daysAgo(days - 1)
-  const rows = stmts().queryRange.all(groupId, since)
+async function getRanking(groupId, days) {
+  let rows
+  if (days === 0) {
+    rows = await sql`
+      SELECT sender, COUNT(*)::int as count FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ})
+      GROUP BY sender ORDER BY count DESC
+    `
+  } else {
+    rows = await sql`
+      SELECT sender, COUNT(*)::int as count FROM events
+      WHERE group_id = ${groupId}
+        AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - ${days + ' days'}::interval)
+      GROUP BY sender ORDER BY count DESC
+    `
+  }
   const result = {}
   for (const row of rows) {
     result[row.sender] = row.count
@@ -82,13 +54,17 @@ function getRanking(groupId, days) {
   return result
 }
 
-function getToday(groupId) {
+async function getToday(groupId) {
   return getRanking(groupId, 0)
 }
 
-function getWeek(groupId) {
-  const since = weekSunday()
-  const rows = stmts().queryRange.all(groupId, since)
+async function getWeek(groupId) {
+  const rows = await sql`
+    SELECT sender, COUNT(*)::int as count FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (date_trunc('week', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '1 day')
+    GROUP BY sender ORDER BY count DESC
+  `
   const result = {}
   for (const row of rows) {
     result[row.sender] = row.count
@@ -96,24 +72,70 @@ function getWeek(groupId) {
   return result
 }
 
-function getMonth(groupId) {
-  return getRanking(groupId, 30)
+async function getMonth(groupId) {
+  const rows = await sql`
+    SELECT sender, COUNT(*)::int as count FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (date_trunc('month', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ})
+    GROUP BY sender ORDER BY count DESC
+  `
+  const result = {}
+  for (const row of rows) {
+    result[row.sender] = row.count
+  }
+  return result
 }
 
-function getBusiestDay(groupId) {
-  return stmts().queryBusiestDay.all(groupId, daysAgo(6))
+async function getYear(groupId, year) {
+  const rows = await sql`
+    SELECT sender, COUNT(*)::int as count FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (${year + '-01-01'}::date AT TIME ZONE ${TZ})
+      AND created_at <  (${(year + 1) + '-01-01'}::date AT TIME ZONE ${TZ})
+    GROUP BY sender ORDER BY count DESC
+  `
+  const result = {}
+  for (const row of rows) {
+    result[row.sender] = row.count
+  }
+  return result
 }
 
-function getBusiestPeriod(groupId) {
-  return stmts().queryBusiestPeriod.all(groupId, daysAgo(6))
+async function getBusiestDay(groupId) {
+  return sql`
+    SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '7 days')
+    GROUP BY day_of_week ORDER BY total DESC
+  `
 }
 
-function getWeekDaily(groupId) {
-  return stmts().queryWeekDaily.all(groupId, weekSunday())
+async function getBusiestPeriod(groupId) {
+  return sql`
+    SELECT CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
+           COUNT(*)::int as total FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '7 days')
+    GROUP BY period ORDER BY total DESC
+  `
 }
 
-function getWeekUserDaily(groupId, sender) {
-  return stmts().queryWeekUserDaily.all(groupId, sender, weekSunday())
+async function getWeekDaily(groupId) {
+  return sql`
+    SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    WHERE group_id = ${groupId}
+      AND created_at >= (date_trunc('week', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '1 day')
+    GROUP BY created_at::date, day_of_week ORDER BY date
+  `
 }
 
-module.exports = { track, getToday, getWeek, getMonth, getBusiestDay, getBusiestPeriod, getWeekDaily, getWeekUserDaily }
+async function getWeekUserDaily(groupId, sender) {
+  return sql`
+    SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    WHERE group_id = ${groupId} AND sender = ${sender}
+      AND created_at >= (date_trunc('week', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '1 day')
+    GROUP BY created_at::date, day_of_week ORDER BY date
+  `
+}
+
+module.exports = { ACTIVITY_TYPES, track, getRanking, getToday, getWeek, getMonth, getYear, getBusiestDay, getBusiestPeriod, getWeekDaily, getWeekUserDaily }
