@@ -32,9 +32,9 @@ const commands = {
     usage: '/bot rank [7|15|21 dias | mes | ano]',
     aliases: ['rank', 'ranking' , 'offline'],
     _dailyUsage: new Map(),
+    _ironiaIndex: 0,
     async handler(groupId, sender, args) {
       const TZ = process.env.TZ || 'Europe/Lisbon'
-      const medals = ['🥇', '🥈', '🥉']
       const fmt = (d) => d.toLocaleDateString('pt-BR', { timeZone: TZ })
 
       // rate limit: 2x por dia por pessoa por grupo
@@ -46,24 +46,42 @@ const commands = {
         if (!k.endsWith(`:${today}`)) usage.delete(k)
       }
       const count = usage.get(key) || 0
-      if (count >= 2) {
+      if (count > 1) {
         const ironias = [
-          'Calma, fiscal do ranking. Só 2x por dia. Vai viver a vida que o ranking não muda a cada 5 minutos.',
-          'De novo? O ranking não vai mudar só porque estás a olhar para ele. 2x por dia, campeão.',
-          'Já gastaste as tuas 2 consultas de hoje. Relaxa, ninguém está a pensar em ti tanto quanto tu achas.',
-          'Limite atingido. Dica: se estás tão preocupado com a tua posição, experimenta mandar mais mensagens em vez de ficar a verificar o ranking.',
-          'Só 2x por dia, amigo. O ranking não é espelho — não precisa de ser consultado a toda a hora.',
+          'Calma, fiscal do ranking. Só 1x por dia. Vai viver a vida que o ranking não muda a cada 5 minutos.',
+          'De novo? O ranking não vai mudar só porque estás a olhar para ele.',
+          'Já gastaste a tua consulta de hoje. Relaxa, ninguém está a pensar em ti tanto quanto tu achas.',
+          'Amigo, o ranking não é espelho, não precisa de ser consultado a toda a hora.',
+          'Oxe, de novo mago? Já pediu hoje. Vá fazer outra coisa, porra.',
+          'Eita caba apegado ao ranking! Só 1x por dia, meu mago. Deixa de frescura.',
+          'Porra, tu é doido é? Quer ver o ranking de novo? Só amanhã, meu mago.',
+          'Misericórdia, porra! Tu acha que o ranking muda a cada respiração ?',
+          'Ô meu mago, larga de ser curioso. Já olhou hoje, agora vai cuidar da tua vida.',
+          'Rapaz, tu tá mais grudado nesse ranking do que chiclete em calçada. Já deu por hoje mago.',
+          'Tá pensando que o ranking é novela? Só tem um capítulo por dia, meu fi.',
+          'Oxe, de novo? Vai tomar uma cerveja, respirar ar puro. O ranking não vai fugir.',
+          'Tu consulta mais esse ranking do que meteorologista consulta previsão do tempo. Relaxa.',
+          'Mago, tu tá mais ansioso que candidato esperando resultado de concurso. Calma.',
+          'Ô cabra teimoso, o ranking só atualiza com mensagem, não com desespero. Vai ler alguma coisa, porra.',
+          'Eita, olha ele de novo. Tu quer que eu mande o ranking por correio também?',
+          'Porra mago, tá parecendo GPS recalculando rota. O destino é o mesmo: volta amanhã.',
+          'Tu acha que ficar pedindo ranking vai te subir de posição? Manda mensagem, não comando.'
         ]
-        return ironias[Math.floor(Math.random() * ironias.length)]
+        const idx = commands.stats._ironiaIndex % ironias.length
+        commands.stats._ironiaIndex = idx + 1
+        return ironias[idx]
       }
 
-      async function formatTop3(title, data) {
-        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      async function formatTop10(title, data) {
+        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 10)
         if (sorted.length === 0) return `\`\`\` ${title}\n  Ainda não há dados suficientes.\n\`\`\``
         const names = await Promise.all(sorted.map(([user]) => contacts.getName(user)))
         const lines = [`\`\`\` ${title}`]
         sorted.forEach(([, count], i) => {
-          lines.push(`  ${medals[i]} ${names[i]} - ${count} msg`)
+          const pos = String(i + 1).padStart(2, ' ')
+          const parts = names[i].split(/\s+/)
+          const name = parts.length > 1 ? parts[0] + ' ' + parts.slice(1).map(p => p[0] + '.').join(' ') : parts[0]
+          lines.push(`  ${pos}. ${name} - ${count} msg`)
         })
         lines.push('```')
         return lines.join('\n')
@@ -79,7 +97,7 @@ const commands = {
         const start = new Date(now)
         start.setDate(now.getDate() - days)
         const title = `Ranking dos últimos ${days} dias (${fmt(start)} → ${fmt(now)})`
-        return formatTop3(title, await stats.getRanking(groupId, days))
+        return formatTop10(title, await stats.getRanking(groupId, days))
       }
 
       // !rank mes → mês corrente
@@ -88,7 +106,7 @@ const commands = {
         const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
         const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
         const title = `Ranking de ${monthNames[now.getMonth()]} ${now.getFullYear()}`
-        return formatTop3(title, await stats.getMonth(groupId))
+        return formatTop10(title, await stats.getMonth(groupId))
       }
 
       // !rank <ano>
@@ -103,7 +121,7 @@ const commands = {
         const start = new Date(`${year}-01-01T00:00:00`)
         const end = year === currentYear ? now : new Date(`${year}-12-31T00:00:00`)
         const title = `Ranking de ${year} (${fmt(start)} → ${fmt(end)})`
-        return formatTop3(title, await stats.getYear(groupId, year))
+        return formatTop10(title, await stats.getYear(groupId, year))
       }
 
       return usageMsg
