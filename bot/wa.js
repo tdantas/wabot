@@ -16,12 +16,15 @@ const log = require('./logger')
 const monitor = require('./monitor')
 const { init, sql } = require('./db')
 const stats = require('./stats')
+const milestone = require('./milestone')
 const { ACTIVITY_TYPES } = stats
 const commands = require('./commands')
 const contacts = require('./contacts')
 const ratelimit = require('./ratelimit')
 const settings = require('./settings')
 const pending = require('./pending')
+const msgstore = require('./msgstore')
+const presence = require('./presence')
 
 const baileysLogger = pino({ level: 'silent' })
 const CONFIG_PATH = path.join(__dirname, 'config.json')
@@ -57,6 +60,40 @@ function loadConfig() {
   return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
 }
 
+// socket em uso; trocado a cada reconexão
+let activeSock = null
+
+// O sinal de presença (online / a escrever) só chega para grupos subscritos, e
+// a subscrição não é eterna. Repetimos periodicamente, o que também apanha os
+// grupos ativados na UI depois do arranque.
+const PRESENCE_SUBSCRIBE_MS = parseInt(process.env.PRESENCE_SUBSCRIBE_MS || String(10 * 60 * 1000), 10)
+
+// A conta do bot é também a conta de uma pessoa real. As ações dela (escrever,
+// reagir, editar) são presença legítima; já o "online" pode vir do processo do
+// bot e não da pessoa, por isso essa origem é ignorada para a própria conta.
+function isBotJid(jid) {
+  if (!jid || !activeSock?.user) return false
+  const norm = (j) => String(j || '').replace(/:\d+@/, '@')
+  const eu = [activeSock.user.id, activeSock.user.lid].filter(Boolean).map(norm)
+  const alvo = norm(jid)
+  return eu.includes(alvo) || eu.includes(norm(contacts.toLid(jid)))
+}
+
+async function subscribePresence() {
+  if (!activeSock) return
+  const grupos = await settings.getListeningGroupIds()
+  let ok = 0
+  for (const gid of grupos) {
+    try {
+      await activeSock.presenceSubscribe(gid)
+      ok++
+    } catch (err) {
+      log.debug({ err, gid }, 'falha ao subscrever presença')
+    }
+  }
+  log.debug({ grupos: ok }, 'subscrição de presença renovada')
+}
+
 async function start() {
   const AUTH_DIR = process.env.AUTH_DIR || 'auth_info'
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -73,7 +110,16 @@ async function start() {
     },
     shouldSyncHistoryMessage: () => false,
     syncFullHistory: false,
+    // A conta que corre o bot ficaria "online" 24h por dia, o que falsearia a
+    // presença (e faria o WhatsApp deixar de notificar o telemóvel).
+    markOnlineOnConnect: false,
+    // devolve o conteúdo original quando o WhatsApp pede o reenvio de uma
+    // mensagem que alguém não conseguiu decifrar ("Waiting for this message")
+    getMessage: async (key) => msgstore.get(key.id),
   })
+  // a partir daqui, tudo o que for enviado fica no cache
+  msgstore.track(sock)
+  activeSock = sock
 
   sock.ev.process(async (events) => {
     if (events['connection.update']) {
@@ -125,6 +171,9 @@ async function start() {
           log.warn('Nenhum grupo configurado para escuta. Use a interface web para ativar grupos.')
           return
         }
+
+        // sem subscrever, o WhatsApp não envia presença dos participantes
+        await subscribePresence()
 
         const groupNames = await Promise.all(listening.map(id => contacts.getName(id)))
         log.info({ groups: groupNames }, `Monitorando ${listening.length} grupo(s). Aguardando mensagens...`)
@@ -209,7 +258,47 @@ async function start() {
         if (sender.replace(/:\d+@/, '@') === botJid) continue
 
         log.info({ channel: from, group: await contacts.getName(from), sender, user: await contacts.getName(sender) }, `${reaction.text} (reação)`)
+        presence.seen(from, sender, new Date(), 'reacao')
         await stats.track(from, sender, ACTIVITY_TYPES.REACTION)
+      }
+    }
+
+    // editar ou apagar uma mensagem também é atividade: chegam em
+    // messages.update (o protocolMessage é traduzido pela Baileys)
+    if (events['messages.update']) {
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
+
+      for (const { key, update } of events['messages.update']) {
+        const from = key?.remoteJid
+        if (!from || !monitoredGroups.has(from)) continue
+
+        // edições feitas pelo próprio bot (barra de loading) não são atividade
+        if (key.fromMe && !key.participant) continue
+
+        const autor = contacts.toLid(update?.key?.participant || key.participant)
+        if (!autor) continue
+
+        // apagar chega com `message: null`; editar traz o conteúdo novo
+        const apagou = update?.message === null
+        presence.seen(from, autor, new Date(), apagou ? 'remocao' : 'edicao')
+        log.debug({ channel: from, sender: autor }, apagou ? 'apagou mensagem' : 'editou mensagem')
+      }
+    }
+
+    // presença do WhatsApp: online, a escrever, a gravar áudio
+    if (events['presence.update']) {
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
+      const { id, presences } = events['presence.update']
+
+      if (monitoredGroups.has(id)) {
+        for (const [participante, info] of Object.entries(presences || {})) {
+          // 'unavailable' é a saída, não conta como estar presente
+          if (!['available', 'composing', 'recording'].includes(info?.lastKnownPresence)) continue
+          const quem = contacts.toLid(participante)
+          if (!quem) continue
+          if (isBotJid(participante)) continue // o bot está sempre ligado
+          presence.seen(id, quem, new Date(), 'online')
+        }
       }
     }
 
@@ -225,7 +314,10 @@ async function start() {
         const reader = contacts.toLid(receipt.userJid)
         if (!reader) continue
 
-        log.info({ channel: from, group: await contacts.getName(from), sender: reader, user: await contacts.getName(reader) }, 'leu mensagem')
+        // só agrega em memória: uma pessoa que volta e lê 200 mensagens gera
+        // 200 receipts, mas apenas um registo de presença
+        presence.seen(from, reader, new Date(Number(receipt.readTimestamp) * 1000), 'leitura')
+        log.debug({ channel: from, sender: reader }, 'leu mensagem')
       }
     }
 
@@ -299,6 +391,12 @@ async function start() {
 
         // ignore bot's own automated replies
         if (msg.key.fromMe && !msg.key.participant) continue
+
+        // Só a partir daqui é atividade de gente: a Baileys reemite as
+        // mensagens que o próprio bot envia (emitOwnEvents), e cada frame da
+        // barra de loading é um envio. Marcar presença antes deste filtro
+        // enchia o mapa da conta que corre o bot.
+        presence.seen(from, sender, msg.messageTimestamp ? new Date(Number(msg.messageTimestamp) * 1000) : new Date(), 'escrita')
 
         const displayName = await contacts.getName(sender)
         const logContent = text || (hasMedia ? '(média)' : '')
@@ -582,6 +680,11 @@ setInterval(async () => {
   try { await pending.purgeExpired() } catch (_) {}
 }, 60 * 1000)
 
+// renova a subscrição de presença dos grupos monitorados
+setInterval(() => {
+  subscribePresence().catch(err => log.debug({ err }, 'erro ao renovar presença'))
+}, PRESENCE_SUBSCRIBE_MS)
+
 monitor.start()
 
 // bootstrap: run migrations then start
@@ -589,6 +692,11 @@ init().then(async () => {
   log.info('Migrations aplicadas, a iniciar bot...')
   await contacts.loadLidCache()
   start()
+  // parabéns a quem cruzar o marco de mensagens do dia em cada grupo
+  milestone.start(async (groupId, text) => {
+    if (activeSock) await activeSock.sendMessage(groupId, { text })
+  })
+  presence.start()
 }).catch(err => {
   log.error({ err }, 'Falha ao inicializar base de dados')
   process.exit(1)

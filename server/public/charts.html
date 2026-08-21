@@ -119,6 +119,10 @@
       font-family: var(--font-display); font-weight: 700;
       font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary);
     }
+    .chart-sub {
+      font-size: 0.7rem; color: var(--text-muted); font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
     .chart-toggle { display: flex; gap: 4px; }
     .toggle-btn {
       font-family: var(--font-body); font-size: 0.7rem; font-weight: 500;
@@ -156,6 +160,7 @@
     <div class="filter-presets" id="controls">
       <button class="filter-btn active" data-range="7">7 dias</button>
       <button class="filter-btn" data-range="15">15 dias</button>
+      <button class="filter-btn" data-range="21">21 dias</button>
       <button class="filter-btn" data-range="30">30 dias</button>
       <button class="filter-btn" data-preset="custom">Custom</button>
     </div>
@@ -245,6 +250,15 @@
     <div class="chart-card span-3">
       <div class="chart-header"><span class="chart-title">Tendência do grupo</span></div>
       <div class="chart-wrap"><canvas id="chartTrend"></canvas></div>
+    </div>
+
+    <!-- row 4: taxa por hora -->
+    <div class="chart-card span-3">
+      <div class="chart-header">
+        <span class="chart-title">Mensagens e presença por hora</span>
+        <span class="chart-sub" id="hourlyPeak"></span>
+      </div>
+      <div class="chart-wrap"><canvas id="chartHourly"></canvas></div>
     </div>
   </div>
 
@@ -441,22 +455,27 @@
       // reload filtered charts
       const sp = sendersParam()
       try {
-        const [rWeekday, rPeriod, rPeriodWd, rTrend] = await Promise.all([
+        const [rWeekday, rPeriod, rPeriodWd, rTrend, rHourly, rPresence] = await Promise.all([
           fetch(apiUrl('/api/stats/by-weekday', sp), FETCH_OPTS),
           fetch(apiUrl('/api/stats/by-period', sp), FETCH_OPTS),
           fetch(apiUrl('/api/stats/period-weekday', sp), FETCH_OPTS),
           fetch(apiUrl('/api/stats/trend', sp), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/hourly', sp), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/presence', sp), FETCH_OPTS),
         ])
 
         cachedWeekday = await rWeekday.json()
         cachedPeriod = await rPeriod.json()
         cachedPeriodWeekday = await rPeriodWd.json()
         cachedTrend = await rTrend.json()
+        cachedHourly = await rHourly.json()
+        cachedPresence = await rPresence.json()
 
         renderWeekdayChart()
         renderPeriodChart()
         renderPeriodWeekdayChart()
         renderTrendChart()
+        renderHourlyChart()
       } catch (err) {
         console.error('Failed to sync charts', err)
       }
@@ -465,7 +484,7 @@
     // =====================
     // CACHED DATA
     // =====================
-    let cachedActivity = null, cachedTrend = null, cachedWeekday = null
+    let cachedActivity = null, cachedTrend = null, cachedWeekday = null, cachedHourly = null, cachedPresence = null
     let cachedPeriod = null, cachedPeriodWeekday = null, cachedRadar = null
 
     // =====================
@@ -530,6 +549,72 @@
           scales: {
             x: { grid: { display: false }, ticks: { font: { size: 10 } } },
             y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+          },
+        },
+      })
+    }
+
+    // =====================
+    // 2b. TAXA POR HORA
+    // =====================
+    function renderHourlyChart() {
+      if (!cachedHourly) return
+      // 'YYYY-MM-DD HH:MM' já no fuso do grupo — não voltamos a converter
+      const labels = cachedHourly.map(r => {
+        const [data, hora] = r.hora.split(' ')
+        const [, m, d] = data.split('-')
+        return `${d}/${m} ${hora.slice(0, 2)}h`
+      })
+      const values = cachedHourly.map(r => r.total)
+
+      // presença: quem estava a ler naquela hora, alinhada pelos mesmos rótulos
+      const presencaMap = new Map((cachedPresence || []).map(r => [r.hora, r.pessoas]))
+      const presencaVals = cachedHourly.map(r => presencaMap.get(r.hora) || 0)
+      const temPresenca = presencaVals.some(v => v > 0)
+
+      const total = values.reduce((a, b) => a + b, 0)
+      const media = values.length ? total / values.length : 0
+      const pico = values.length ? Math.max(...values) : 0
+      const horaPico = labels[values.indexOf(pico)] || '—'
+      const picoPresenca = temPresenca ? Math.max(...presencaVals) : 0
+      document.getElementById('hourlyPeak').textContent =
+        `média ${media.toFixed(1)} msg/h · pico ${pico} (${horaPico})` +
+        (temPresenca ? ` · até ${picoPresenca} a ler` : '')
+
+      const datasets = [{
+        label: 'msg/h', data: values, yAxisID: 'y',
+        backgroundColor: 'rgba(232,168,50,0.55)', borderColor: '#e8a832',
+        borderWidth: 0, borderRadius: 2, barPercentage: 1, categoryPercentage: 0.9,
+      }]
+      // só entra quando há dados: a tabela `presence` só enche a partir do deploy
+      if (temPresenca) {
+        datasets.push({
+          label: 'a ler', data: presencaVals, yAxisID: 'y1', type: 'line',
+          borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,0.08)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
+        })
+      }
+
+      makeChart('chartHourly', {
+        type: 'bar', data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            avgLine: true,
+            legend: { display: temPresenca, position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+            tooltip: { ...sharedTooltip, callbacks: {
+              label: (ctx) => ctx.dataset.yAxisID === 'y1' ? `  ${ctx.parsed.y} a ler` : `  ${ctx.parsed.y} msg/h`,
+            } },
+          },
+          scales: {
+            // muitas barras: deixa o Chart.js escolher quantos rótulos cabem
+            x: { grid: { display: false }, ticks: { font: { size: 9 }, maxTicksLimit: 12, autoSkip: true, maxRotation: 0 } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0, font: { size: 10 } } },
+            y1: {
+              display: temPresenca, position: 'right', beginAtZero: true,
+              grid: { display: false },
+              ticks: { precision: 0, font: { size: 10 }, color: '#60a5fa' },
+            },
           },
         },
       })
@@ -663,15 +748,17 @@
     // LOAD ALL
     // =====================
     async function loadAll() {
-      let rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar
+      let rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar, rHourly, rPresence
       try {
-        [rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar] = await Promise.all([
+        [rActivity, rTrend, rWeekday, rPeriod, rPeriodWd, rRadar, rHourly, rPresence] = await Promise.all([
           fetch(apiUrl('/api/stats/top-users-daily'), FETCH_OPTS),
           fetch(apiUrl('/api/stats/trend'), FETCH_OPTS),
           fetch(apiUrl('/api/stats/by-weekday'), FETCH_OPTS),
           fetch(apiUrl('/api/stats/by-period'), FETCH_OPTS),
           fetch(apiUrl('/api/stats/period-weekday'), FETCH_OPTS),
           fetch(apiUrl('/api/stats/users-weekday'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/hourly'), FETCH_OPTS),
+          fetch(apiUrl('/api/stats/presence'), FETCH_OPTS),
         ])
       } catch (err) {
         document.getElementById('userPills').innerHTML = '<div style="color:var(--text-muted);padding:12px;text-align:center;width:100%">Erro ao carregar dados. Tente novamente.</div>'
@@ -684,6 +771,8 @@
       cachedPeriod = await rPeriod.json()
       cachedPeriodWeekday = await rPeriodWd.json()
       cachedRadar = await rRadar.json()
+      cachedHourly = await rHourly.json()
+      cachedPresence = await rPresence.json()
 
       document.getElementById('title').textContent = cachedActivity.name
       document.title = `WABot — ${cachedActivity.name} — Analytics`
@@ -702,6 +791,7 @@
       renderPeriodChart()
       renderPeriodWeekdayChart()
       renderRadarChart()
+      renderHourlyChart()
 
       requestAnimationFrame(() => document.body.classList.add('loaded'))
     }

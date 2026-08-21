@@ -8,6 +8,48 @@ const { sql } = require('./db')
 
 const LIVE_DOMAIN = process.env.LIVE_DOMAIN || 'http://localhost:3000'
 
+const MAX_EMOJIS = 3
+const _segmenter = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter('pt', { granularity: 'grapheme' })
+  : null
+
+// Mantém no máximo MAX_EMOJIS emojis para o nome não esticar a linha.
+// Segmenta por grafema: 👨🏽‍💻 e 🇧🇷 contam como 1, não como vários.
+function limitEmojis(str) {
+  const graphemes = _segmenter ? [..._segmenter.segment(str)].map(s => s.segment) : [...str]
+  let kept = 0
+  const out = graphemes
+    .filter(g => {
+      if (!/[\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(g)) return true
+      return ++kept <= MAX_EMOJIS
+    })
+    .join('')
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+// Abrevia o nome (João da Silva → João d. S.) preservando os emojis do perfil.
+// Emojis são pares substitutos em UTF-16: cortar com p[0] parte o par e gera
+// o caractere inválido (�), por isso blocos de emoji ficam inteiros e a
+// inicial vem sempre da primeira letra real do token.
+function shortName(fullName) {
+  const raw = String(fullName || '').trim()
+  const parts = raw.split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) return limitEmojis(raw)
+  const isWord = p => /[\p{L}\p{N}]/u.test(p)
+  let firstWord = false
+  const short = parts
+    .map(p => {
+      if (!isWord(p)) return p // só emoji/símbolo: mantém inteiro
+      if (!firstWord) {
+        firstWord = true
+        return p // primeiro nome completo
+      }
+      return [...p].find(ch => /[\p{L}\p{N}]/u.test(ch)) + '.'
+    })
+    .join(' ')
+  return limitEmojis(short)
+}
+
 const commands = {
   help: {
     description: 'Lista os comandos disponíveis',
@@ -31,46 +73,14 @@ const commands = {
     description: 'Top 3 do grupo (últimos dias, mês ou ano)',
     usage: '/bot rank [7|15|21 dias | mes | ano]',
     aliases: ['rank', 'ranking' , 'offline'],
-    _dailyUsage: new Map(),
-    _ironiaIndex: 0,
     async handler(groupId, sender, args) {
-      const TZ = process.env.TZ || 'Europe/Lisbon'
+      // fuso de apresentação do grupo, configurável na UI
+      const TZ = await settings.getTimezone(groupId)
       const fmt = (d) => d.toLocaleDateString('pt-BR', { timeZone: TZ })
 
-      // rate limit: 2x por dia por pessoa por grupo
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ })
-      const key = `${groupId}:${sender}:${today}`
-      const usage = commands.stats._dailyUsage
-      // limpar entradas de dias anteriores
-      for (const k of usage.keys()) {
-        if (!k.endsWith(`:${today}`)) usage.delete(k)
-      }
-      const count = usage.get(key) || 0
-      if (count > 1) {
-        const ironias = [
-          'Calma, fiscal do ranking. Só 1x por dia. Vai viver a vida que o ranking não muda a cada 5 minutos.',
-          'De novo? O ranking não vai mudar só porque estás a olhar para ele.',
-          'Já gastaste a tua consulta de hoje. Relaxa, ninguém está a pensar em ti tanto quanto tu achas.',
-          'Amigo, o ranking não é espelho, não precisa de ser consultado a toda a hora.',
-          'Oxe, de novo mago? Já pediu hoje. Vá fazer outra coisa, porra.',
-          'Eita caba apegado ao ranking! Só 1x por dia, meu mago. Deixa de frescura.',
-          'Porra, tu é doido é? Quer ver o ranking de novo? Só amanhã, meu mago.',
-          'Misericórdia, porra! Tu acha que o ranking muda a cada respiração ?',
-          'Ô meu mago, larga de ser curioso. Já olhou hoje, agora vai cuidar da tua vida.',
-          'Rapaz, tu tá mais grudado nesse ranking do que chiclete em calçada. Já deu por hoje mago.',
-          'Tá pensando que o ranking é novela? Só tem um capítulo por dia, meu fi.',
-          'Oxe, de novo? Vai tomar uma cerveja, respirar ar puro. O ranking não vai fugir.',
-          'Tu consulta mais esse ranking do que meteorologista consulta previsão do tempo. Relaxa.',
-          'Mago, tu tá mais ansioso que candidato esperando resultado de concurso. Calma.',
-          'Ô cabra teimoso, o ranking só atualiza com mensagem, não com desespero. Vai ler alguma coisa, porra.',
-          'Eita, olha ele de novo. Tu quer que eu mande o ranking por correio também?',
-          'Porra mago, tá parecendo GPS recalculando rota. O destino é o mesmo: volta amanhã.',
-          'Tu acha que ficar pedindo ranking vai te subir de posição? Manda mensagem, não comando.'
-        ]
-        const idx = commands.stats._ironiaIndex % ironias.length
-        commands.stats._ironiaIndex = idx + 1
-        return ironias[idx]
-      }
+      // o wa.js não contabiliza comandos, então o !rank conta a si próprio
+      // antes de montar a resposta (aparece já no ranking devolvido)
+      await stats.track(groupId, sender)
 
       async function formatTop10(title, data) {
         const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 10)
@@ -79,30 +89,37 @@ const commands = {
         const lines = [`\`\`\` ${title}`]
         sorted.forEach(([, count], i) => {
           const pos = String(i + 1).padStart(2, ' ')
-          const parts = names[i].split(/\s+/)
-          const name = parts.length > 1 ? parts[0] + ' ' + parts.slice(1).map(p => p[0] + '.').join(' ') : parts[0]
-          lines.push(`  ${pos}. ${name} - ${count} msg`)
+          lines.push(`  ${pos}. ${shortName(names[i])} - ${count} msg`)
         })
         lines.push('```')
         return lines.join('\n')
       }
 
-      const usageMsg = 'Uso: !rank [7|15|21] dias | mes | <ano>\n\nExemplos:\n  !rank 7 dias   — últimos 7 dias\n  !rank 15 dias  — últimos 15 dias\n  !rank 21 dias  — últimos 21 dias\n  !rank mes      — mês atual\n  !rank 2026     — top 3 do ano'
+      const usageMsg = 'Uso: !rank [dia | [7|15|21] dias | mes | <ano>]\n\nExemplos:\n  !rank          — últimos 7 dias\n  !rank dia      — só hoje\n  !rank 7 dias   — últimos 7 dias\n  !rank 15 dias  — últimos 15 dias\n  !rank 21 dias  — últimos 21 dias\n  !rank mes      — mês atual\n  !rank 2026     — top 3 do ano'
+
+      // !rank sem argumentos equivale a !rank 7 dias
+      if (args.length === 0) args = ['7', 'dias']
+
+      // !rank dia → só hoje
+      if (args.length === 1 && /^(dia|hoje)$/i.test(args[0])) {
+        const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
+        const title = `Ranking de hoje (${fmt(now)})`
+        return formatTop10(title, await stats.getToday(groupId))
+      }
 
       // !rank X dias (7, 15 ou 21)
       if (args.length === 2 && /^(7|15|21)$/.test(args[0]) && args[1].toLowerCase() === 'dias') {
-        usage.set(key, count + 1)
         const days = parseInt(args[0], 10)
         const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
         const start = new Date(now)
-        start.setDate(now.getDate() - days)
+        // o período inclui hoje, então 7 dias começa há 6 dias
+        start.setDate(now.getDate() - (days - 1))
         const title = `Ranking dos últimos ${days} dias (${fmt(start)} → ${fmt(now)})`
         return formatTop10(title, await stats.getRanking(groupId, days))
       }
 
       // !rank mes → mês corrente
       if (args.length === 1 && /^m[eê]s$/i.test(args[0])) {
-        usage.set(key, count + 1)
         const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
         const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
         const title = `Ranking de ${monthNames[now.getMonth()]} ${now.getFullYear()}`
@@ -111,7 +128,6 @@ const commands = {
 
       // !rank <ano>
       if (args.length === 1 && /^\d{4}$/.test(args[0])) {
-        usage.set(key, count + 1)
         const year = parseInt(args[0], 10)
         const now = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
         const currentYear = now.getFullYear()

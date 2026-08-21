@@ -60,11 +60,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'wabot-live-' + require('crypto').r
 app.use(cookieParser())
 
 // --- clean URL routing: /prefix/group/UUID/page ---
-const VALID_PAGES = ['group', 'calendar', 'charts', 'list', 'race', 'settings']
+const VALID_PAGES = ['group', 'calendar', 'charts', 'list', 'race', 'presence', 'settings']
 const publicDir = path.join(__dirname, 'public')
 
 function serveGroupPage(prefix) {
-  return (req, res) => {
+  return async (req, res) => {
     const page = req.params.page || 'group'
     if (!VALID_PAGES.includes(page)) return res.status(404).send('Not found')
     const filePath = path.join(publicDir, page + '.html')
@@ -73,6 +73,19 @@ function serveGroupPage(prefix) {
     // Prefix relative CSS/JS with absolute path + version hash (no <base> tag needed)
     const base = prefix ? prefix + '/' : '/'
     html = html.replace(/(href|src)="([^"/:][^"]*\.(css|js))"/g, `$1="${base}$2?v=${ASSET_VERSION}"`)
+
+    // fuso do grupo: as datas dos filtros têm de ser calculadas nele, não no
+    // relógio de quem abre a página
+    let tz = DEFAULT_TZ
+    try {
+      const uuid = req.params.uuid
+      const groupId = res.locals?.forceGroupId || (uuid ? await groupIdFromUuid(uuid) : null)
+      if (groupId) tz = await groupTz(groupId)
+    } catch (err) {
+      log.error({ err }, 'Erro ao resolver fuso do grupo')
+    }
+    html = html.replace('</head>', `<script>window.GROUP_TZ=${JSON.stringify(tz)}</script></head>`)
+
     res.set('Cache-Control', 'no-cache')
     res.type('html').send(html)
   }
@@ -82,7 +95,7 @@ function serveGroupPage(prefix) {
 app.use((req, res, next) => {
   const id = req.query.id
   if (!id) return next()
-  const match = req.path.match(/^(\/(?:admin|live))?\/(calendar|charts|list|race|group|settings)\.html$/)
+  const match = req.path.match(/^(\/(?:admin|live))?\/(calendar|charts|list|race|presence|group|settings)\.html$/)
   if (match) {
     const pfx = match[1] || ''
     const page = match[2]
@@ -140,7 +153,32 @@ async function getNames(jids) {
   return map
 }
 
+const DEFAULT_TZ = TZ
+const tzCache = new Map() // group_id → { tz, at }
+
+// Fuso de apresentação do grupo (configurável na UI). Cache curta porque quem
+// grava é este mesmo processo, mas o bot também lê a coluna.
+async function groupTz(groupId) {
+  const hit = tzCache.get(groupId)
+  if (hit && Date.now() - hit.at < 60000) return hit.tz
+  const [row] = await sql`SELECT timezone FROM group_settings WHERE group_id = ${groupId}`
+  const tz = row?.timezone || DEFAULT_TZ
+  tzCache.set(groupId, { tz, at: Date.now() })
+  return tz
+}
+
+function isValidTimezone(tz) {
+  if (typeof tz !== 'string' || !tz) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function getRanking(groupId, start, end, limit = 10) {
+  const TZ = await groupTz(groupId)
   const rows = await sql`
     SELECT sender, COUNT(*)::int as count FROM events
     WHERE group_id = ${groupId}
@@ -424,7 +462,7 @@ app.get('/group/:uuid', serveGroupPage(''))
 app.get('/group/:uuid/:page', serveGroupPage(''))
 
 // --- protect direct access ---
-const PROTECTED_PAGES = ['/list.html', '/charts.html', '/calendar.html', '/settings.html', '/groups.html']
+const PROTECTED_PAGES = ['/list.html', '/charts.html', '/calendar.html', '/presence.html', '/settings.html', '/groups.html']
 app.use((req, res, next) => {
   if (PROTECTED_PAGES.includes(req.path)) return res.redirect('/')
   next()
@@ -461,7 +499,7 @@ app.get('/api/config/groups', adminApiAuth, async (req, res) => {
   try {
     const [globalDisabledRows, groups, allDisabled, allMeta, cmds] = await Promise.all([
       sql`SELECT command FROM group_disabled_commands WHERE group_id = ${GLOBAL_ID}`,
-      sql`SELECT gs.group_id, gs.uuid, gs.listening, gs.troll_mode, c.name
+      sql`SELECT gs.group_id, gs.uuid, gs.listening, gs.troll_mode, gs.milestones, gs.timezone, c.name
           FROM group_settings gs LEFT JOIN contacts c ON c.jid = gs.group_id
           ORDER BY gs.listening DESC, c.name ASC`,
       sql`SELECT group_id, command FROM group_disabled_commands WHERE group_id != ${GLOBAL_ID}`,
@@ -483,6 +521,8 @@ app.get('/api/config/groups', adminApiAuth, async (req, res) => {
       name: g.name || g.group_id.replace(/@g\.us$/, ''),
       listening: g.listening,
       troll_mode: g.troll_mode,
+      milestones: g.milestones,
+      timezone: g.timezone || DEFAULT_TZ,
       disabled_commands: disabledMap.get(g.group_id) || [],
       transcript_daily_limit: metaMap.get(g.group_id)?.transcript_daily_limit ?? 2,
       transcript_max_seconds: metaMap.get(g.group_id)?.transcript_max_seconds ?? 30,
@@ -534,6 +574,35 @@ app.put('/api/config/groups/:id/troll', adminApiAuth, async (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT troll')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.put('/api/config/groups/:id/milestones', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const { enabled } = req.body
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' })
+    await sql`INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (${groupId}, FALSE, FALSE) ON CONFLICT DO NOTHING`
+    await sql`UPDATE group_settings SET milestones = ${!!enabled} WHERE group_id = ${groupId}`
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT milestones')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.put('/api/config/groups/:id/timezone', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const { timezone } = req.body
+    if (!isValidTimezone(timezone)) return res.status(400).json({ error: 'invalid timezone' })
+    await sql`INSERT INTO group_settings (group_id, listening, troll_mode) VALUES (${groupId}, FALSE, FALSE) ON CONFLICT DO NOTHING`
+    await sql`UPDATE group_settings SET timezone = ${timezone} WHERE group_id = ${groupId}`
+    tzCache.delete(groupId)
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT timezone')
     res.status(500).json({ error: 'internal error' })
   }
 })
@@ -713,8 +782,10 @@ statsRouter.get('/', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
 
-    const { groupName, rows } = await getRanking(groupId, req.query.start, req.query.end)
+    const limite = Math.min(parseInt(req.query.limit) || 10, 200)
+    const { groupName, rows } = await getRanking(groupId, req.query.start, req.query.end, limite)
     res.json({ name: groupName, rows })
   } catch (err) {
     log.error({ err }, 'Erro /api/stats')
@@ -726,20 +797,21 @@ statsRouter.get('/daily', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
 
     const start = req.query.start || null
     const end = req.query.end || null
 
     const rows = await sql`
-      SELECT created_at::date as date,
-             EXTRACT(DOW FROM created_at)::int as day_of_week,
+      SELECT (created_at AT TIME ZONE ${TZ})::date as date,
+             EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week,
              CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
              COUNT(*)::int as total
       FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
         AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
-      GROUP BY created_at::date, day_of_week, period ORDER BY date, period
+      GROUP BY 1, 2, 3 ORDER BY date, period
     `
 
     res.json(rows)
@@ -753,6 +825,7 @@ statsRouter.get('/user-daily', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
 
     const sender = req.query.sender
     if (!sender) return res.status(400).json({ error: 'sender required' })
@@ -761,15 +834,15 @@ statsRouter.get('/user-daily', async (req, res) => {
     const end = req.query.end || null
 
     const rows = await sql`
-      SELECT created_at::date as date,
-             EXTRACT(DOW FROM created_at)::int as day_of_week,
+      SELECT (created_at AT TIME ZONE ${TZ})::date as date,
+             EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week,
              CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
              COUNT(*)::int as total
       FROM events
       WHERE group_id = ${groupId} AND sender = ${sender}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
         AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
-      GROUP BY created_at::date, day_of_week, period ORDER BY date, period
+      GROUP BY 1, 2, 3 ORDER BY date, period
     `
 
     const name = await getName(sender)
@@ -784,6 +857,7 @@ statsRouter.get('/top-users-daily', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
 
     const start = req.query.start || null
     const end = req.query.end || null
@@ -799,11 +873,11 @@ statsRouter.get('/top-users-daily', async (req, res) => {
     const senderIds = top5.map(u => u.sender)
     const [nameMap, allDays] = await Promise.all([
       getNames([groupId, ...senderIds]),
-      sql`SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, sender, COUNT(*)::int as total
+      sql`SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, sender, COUNT(*)::int as total
           FROM events
           WHERE group_id = ${groupId} AND sender = ANY(${senderIds})
             AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
-          GROUP BY created_at::date, day_of_week, sender ORDER BY date`,
+          GROUP BY 1, 2, 3 ORDER BY date`,
     ])
 
     const daysBySender = new Map()
@@ -830,6 +904,7 @@ statsRouter.get('/by-weekday', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
@@ -837,7 +912,7 @@ statsRouter.get('/by-weekday', async (req, res) => {
     let rows
     if (senders) {
       rows = await sql`
-        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        SELECT EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
           AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
           AND sender = ANY(${senders})
@@ -845,7 +920,7 @@ statsRouter.get('/by-weekday', async (req, res) => {
       `
     } else {
       rows = await sql`
-        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        SELECT EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
           AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
         GROUP BY day_of_week ORDER BY day_of_week
@@ -863,6 +938,7 @@ statsRouter.get('/by-period', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
@@ -898,6 +974,7 @@ statsRouter.get('/users-weekday', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
 
@@ -911,7 +988,7 @@ statsRouter.get('/users-weekday', async (req, res) => {
     const senderIds = top5.map(u => u.sender)
     const [nameMap, allWeekdays] = await Promise.all([
       getNames(senderIds),
-      sql`SELECT sender, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+      sql`SELECT sender, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
           WHERE group_id = ${groupId} AND sender = ANY(${senderIds})
             AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
           GROUP BY sender, day_of_week ORDER BY day_of_week`,
@@ -934,6 +1011,7 @@ statsRouter.get('/trend', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
@@ -941,18 +1019,18 @@ statsRouter.get('/trend', async (req, res) => {
     let rows
     if (senders) {
       rows = await sql`
-        SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
           AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
           AND sender = ANY(${senders})
-        GROUP BY created_at::date, day_of_week ORDER BY date
+        GROUP BY 1, 2 ORDER BY date
       `
     } else {
       rows = await sql`
-        SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+        SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
           AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
-        GROUP BY created_at::date, day_of_week ORDER BY date
+        GROUP BY 1, 2 ORDER BY date
       `
     }
 
@@ -967,6 +1045,7 @@ statsRouter.get('/period-weekday', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
     const senders = req.query.senders ? req.query.senders.split(',') : null
@@ -974,7 +1053,7 @@ statsRouter.get('/period-weekday', async (req, res) => {
     let rows
     if (senders) {
       rows = await sql`
-        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week,
+        SELECT EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week,
                CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
                COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
@@ -984,7 +1063,7 @@ statsRouter.get('/period-weekday', async (req, res) => {
       `
     } else {
       rows = await sql`
-        SELECT EXTRACT(DOW FROM created_at)::int as day_of_week,
+        SELECT EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week,
                CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
                COUNT(*)::int as total FROM events
         WHERE group_id = ${groupId}
@@ -1004,15 +1083,16 @@ statsRouter.get('/daily-winners', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
 
     const rows = await sql`
-      SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, sender, COUNT(*)::int as total
+      SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, sender, COUNT(*)::int as total
       FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
-      GROUP BY created_at::date, day_of_week, sender ORDER BY date, total DESC
+      GROUP BY 1, 2, 3 ORDER BY date, total DESC
     `
 
     const byDate = new Map()
@@ -1034,10 +1114,161 @@ statsRouter.get('/daily-winners', async (req, res) => {
   }
 })
 
+// Taxa de mensagens por hora (estilo Prometheus): buckets horários dentro do
+// período, com as horas mortas preenchidas a zero para o gráfico não saltar
+// buracos. O time_bucket corre em UTC e é convertido no fim para o fuso do
+// grupo — materializar já convertido partiria se o fuso mudasse na UI.
+statsRouter.get('/hourly', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    const start = req.query.start || null
+    const end = req.query.end || null
+    const senders = req.query.senders ? req.query.senders.split(',') : null
+
+    let rows
+    if (senders) {
+      rows = await sql`
+        SELECT to_char(bucket AT TIME ZONE ${TZ}, 'YYYY-MM-DD HH24:MI') as hora, total
+        FROM (
+          SELECT time_bucket_gapfill('1 hour', created_at) as bucket,
+                 COALESCE(COUNT(*), 0)::int as total
+          FROM events
+          WHERE group_id = ${groupId}
+            AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+            AND created_at <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+            AND sender = ANY(${senders})
+          GROUP BY time_bucket_gapfill('1 hour', created_at)
+        ) t
+        ORDER BY bucket
+      `
+    } else {
+      rows = await sql`
+        SELECT to_char(bucket AT TIME ZONE ${TZ}, 'YYYY-MM-DD HH24:MI') as hora, total
+        FROM (
+          SELECT time_bucket_gapfill('1 hour', created_at) as bucket,
+                 COALESCE(COUNT(*), 0)::int as total
+          FROM events
+          WHERE group_id = ${groupId}
+            AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+            AND created_at <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          GROUP BY time_bucket_gapfill('1 hour', created_at)
+        ) t
+        ORDER BY bucket
+      `
+    }
+
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/hourly')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// Presença por hora: quantas pessoas estiveram a acompanhar o grupo, a partir
+// dos receipts de leitura já coalescidos em baldes de 5 minutos.
+statsRouter.get('/presence', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    const start = req.query.start || null
+    const end = req.query.end || null
+    const senders = req.query.senders ? req.query.senders.split(',') : null
+
+    // date_trunc em vez de time_bucket: os baldes já vêm alinhados aos 5 min,
+    // e `presence` não é hypertable
+    let rows
+    if (senders) {
+      rows = await sql`
+        SELECT to_char(date_trunc('hour', bucket) AT TIME ZONE ${TZ}, 'YYYY-MM-DD HH24:MI') as hora,
+               COUNT(DISTINCT sender)::int as pessoas,
+               (COUNT(*) * 5)::int as minutos
+        FROM presence
+        WHERE group_id = ${groupId}
+          AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+          AND sender = ANY(${senders})
+        GROUP BY date_trunc('hour', bucket) ORDER BY 1
+      `
+    } else {
+      rows = await sql`
+        SELECT to_char(date_trunc('hour', bucket) AT TIME ZONE ${TZ}, 'YYYY-MM-DD HH24:MI') as hora,
+               COUNT(DISTINCT sender)::int as pessoas,
+               (COUNT(*) * 5)::int as minutos
+        FROM presence
+        WHERE group_id = ${groupId}
+          AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY date_trunc('hour', bucket) ORDER BY 1
+      `
+    }
+
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/presence')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// Heatmap de presença de uma pessoa: células de 15 minutos, agregadas a partir
+// dos baldes de 5 minutos guardados. `eventos` dá a intensidade da cor e
+// `slots` (baldes de 5 min ocupados) dá o tempo presente dentro da célula.
+statsRouter.get('/presence-heatmap', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    // sem `sender` devolve o agregado do grupo, com o número de pessoas
+    // distintas presentes em cada célula
+    const sender = req.query.sender || null
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    const rows = sender
+      ? await sql`
+        SELECT to_char(bucket AT TIME ZONE ${TZ}, 'YYYY-MM-DD') as dia,
+               (EXTRACT(HOUR FROM bucket AT TIME ZONE ${TZ}) * 4
+                + FLOOR(EXTRACT(MINUTE FROM bucket AT TIME ZONE ${TZ}) / 15))::int as slot,
+               SUM(events)::int as eventos,
+               SUM(actions)::int as acoes,
+               SUM(passive)::int as passivo,
+               COUNT(*)::int as slots
+        FROM presence
+        WHERE group_id = ${groupId} AND sender = ${sender}
+          AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+      `
+      : await sql`
+        SELECT to_char(bucket AT TIME ZONE ${TZ}, 'YYYY-MM-DD') as dia,
+               (EXTRACT(HOUR FROM bucket AT TIME ZONE ${TZ}) * 4
+                + FLOOR(EXTRACT(MINUTE FROM bucket AT TIME ZONE ${TZ}) / 15))::int as slot,
+               SUM(events)::int as eventos,
+               COUNT(DISTINCT sender)::int as pessoas,
+               COUNT(*)::int as slots
+        FROM presence
+        WHERE group_id = ${groupId}
+          AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+      `
+
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/presence-heatmap')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
 statsRouter.get('/race', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
     if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
     const limit = parseInt(req.query.limit) || 15
@@ -1053,12 +1284,12 @@ statsRouter.get('/race', async (req, res) => {
 
     // get daily counts for those senders
     const rows = await sql`
-      SELECT created_at::date as date, sender, COUNT(*)::int as total
+      SELECT (created_at AT TIME ZONE ${TZ})::date as date, sender, COUNT(*)::int as total
       FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
         AND sender = ANY(${senderIds})
-      GROUP BY created_at::date, sender ORDER BY date
+      GROUP BY 1, 2 ORDER BY date
     `
 
     const nameMap = await getNames([groupId, ...senderIds])

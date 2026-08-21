@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <title>WABot — Presença</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="ranking.css">
+  <style>
+    .container { max-width: 1100px; padding: 28px 24px 80px; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 20px;
+    }
+
+    .filters {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px;
+    }
+    .filter-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+    .person-select, .date-input {
+      font-family: var(--font-body); font-size: 0.78rem;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+      cursor: pointer; color-scheme: dark; min-height: 40px;
+    }
+    .person-select option { background: #14151a; color: var(--text); }
+    .person-select { min-width: 190px; max-width: 100%; }
+    .person-select:focus, .date-input:focus { outline: none; border-color: var(--border-accent); }
+    .dates { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+    .dates span { font-size: 0.72rem; color: var(--text-muted); }
+
+    /* erro de período */
+    .range-error {
+      display: none; align-items: center; gap: 8px;
+      background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30);
+      color: #f2a2a2; font-size: 0.8rem; border-radius: 10px; padding: 10px 14px; margin-bottom: 16px;
+    }
+    .range-error.show { display: flex; }
+
+    /* --- heatmap: rampa sequencial de um só tom, validada no fundo escuro --- */
+    .hm-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .hm-title { font-family: var(--font-display); font-weight: 700; font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+    .hm-sub { font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .hm-wrap { overflow-x: auto; padding-bottom: 4px; }
+    .hm-grid { display: grid; grid-auto-rows: 17px; gap: 2px; min-width: 420px; }
+    .hm-row { display: grid; grid-template-columns: 58px repeat(60, 1fr); gap: 1px; align-items: center; }
+    .hm-day { font-size: 0.75rem; color: var(--text-muted); text-align: right; padding-right: 6px; font-variant-numeric: tabular-nums; }
+    .hm-cell { height: 17px; border-radius: 2px; background: rgba(255,255,255,0.03); }
+    /* ainda não aconteceu: sem fundo nenhum, para não se ler como ausência */
+    .hm-cell.futuro { background: transparent; }
+    /* esteve presente sem agir: anel em vez de preenchimento — a cor fica
+       reservada para intensidade de atividade */
+    .hm-cell.obs { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(232,168,50,0.45); }
+    .hm-cell.v1 { background: #74501a; }
+    .hm-cell.v2 { background: #9d6d1c; }
+    .hm-cell.v3 { background: #c68a22; }
+    .hm-cell.v4 { background: #e8a832; }
+    .hm-cell.v5 { background: #f7d28c; }
+    .hm-hours { display: grid; grid-template-columns: 58px repeat(60, 1fr); gap: 1px; margin-bottom: 4px; }
+    .hm-hour { font-size: 0.7rem; color: var(--text-muted); grid-column: span 12; }
+    .hm-legend { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 0.75rem; color: var(--text-muted); }
+    .hm-legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+    .hm-toggle { font-size: 0.7rem; padding: 6px 10px; min-height: 32px; }
+    .hm-empty { color: var(--text-muted); font-size: 0.82rem; text-align: center; padding: 30px 0; }
+
+    .totals { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .total-item { font-size: 0.72rem; color: var(--text-muted); }
+    .total-item b { display: block; font-family: var(--font-display); font-size: 1.15rem; color: var(--text); font-variant-numeric: tabular-nums; }
+
+    @media (max-width: 700px) {
+      .container { padding: 20px 12px 60px; }
+      .dates { margin-left: 0; width: 100%; }
+      .person-select { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="topbar">
+    <span class="topbar-title" id="title">Presença</span>
+  </div>
+
+  <div class="container">
+    <div class="filters">
+      <select class="person-select" id="person"></select>
+      <div class="filter-presets" id="presets"></div>
+      <div class="dates">
+        <input type="date" class="date-input" id="start">
+        <span>até</span>
+        <input type="date" class="date-input" id="end">
+      </div>
+    </div>
+
+    <div class="range-error" id="rangeError">
+      <span>&#9888;</span><span id="rangeErrorText"></span>
+    </div>
+
+    <div class="card">
+      <div class="hm-head">
+        <span class="hm-title">Presença e participação</span>
+        <span style="display:flex;gap:12px;align-items:center;margin-left:auto">
+          <button class="filter-btn hm-toggle" id="soAVerBtn">Somente observou</button>
+          <span class="hm-sub" id="hmSub"></span>
+        </span>
+      </div>
+      <div class="hm-wrap" id="hmWrap"><div class="hm-empty">A carregar…</div></div>
+      <div class="hm-legend" id="legendaMapa"></div>
+      <div class="totals" id="totals"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="hm-head">
+        <span class="hm-title">Grupo — todos juntos</span>
+        <span class="hm-sub" id="hmSubGrupo"></span>
+      </div>
+      <div class="hm-wrap" id="hmWrapGrupo"><div class="hm-empty">A carregar…</div></div>
+      <div class="totals" id="totalsGrupo"></div>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script>
+    const MAX_DIAS = 30
+    const HORA_INICIO = 5, HORA_FIM = 20
+    const SLOT_INICIO = HORA_INICIO * 4, SLOT_FIM = HORA_FIM * 4
+
+    if (!groupId) location.href = '/'
+
+    const PRESETS = [7, 15, 21, 30]
+    let startDate = daysAgoStr(6), endDate = todayStr()
+    let sender = null, pessoas = []
+
+    const $start = document.getElementById('start')
+    const $end = document.getElementById('end')
+    const $erro = document.getElementById('rangeError')
+
+    function diasNoPeriodo(a, b) {
+      return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000) + 1
+    }
+
+    // Devolve true quando o período é aceitável. O limite existe porque cada dia
+    // é uma linha de 60 células: acima de 30 o mapa deixa de caber no ecrã e a
+    // leitura passa a ser mais lenta sem ganhar nada.
+    function validarPeriodo() {
+      if (new Date(startDate) > new Date(endDate)) {
+        mostrarErro('A data de início é depois da data de fim.')
+        return false
+      }
+      const dias = diasNoPeriodo(startDate, endDate)
+      if (dias > MAX_DIAS) {
+        mostrarErro(`Período de ${dias} dias — o máximo é ${MAX_DIAS}. Escolhe um intervalo mais curto.`)
+        return false
+      }
+      $erro.classList.remove('show')
+      return true
+    }
+
+    function mostrarErro(texto) {
+      document.getElementById('rangeErrorText').textContent = texto
+      $erro.classList.add('show')
+      for (const id of ['hmWrap', 'hmWrapGrupo']) {
+        document.getElementById(id).innerHTML = '<div class="hm-empty">Ajusta o período para ver a presença.</div>'
+      }
+      for (const id of ['totals', 'totalsGrupo', 'hmSub', 'hmSubGrupo']) {
+        document.getElementById(id).innerHTML = ''
+      }
+    }
+
+    function renderPresets() {
+      const dias = diasNoPeriodo(startDate, endDate)
+      document.getElementById('presets').innerHTML = PRESETS.map(n =>
+        `<button class="filter-btn${n === dias && endDate === todayStr() ? ' active' : ''}" data-dias="${n}">${n} dias</button>`
+      ).join('')
+    }
+
+    document.getElementById('presets').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-dias]')
+      if (!btn) return
+      const n = parseInt(btn.dataset.dias, 10)
+      startDate = daysAgoStr(n - 1)
+      endDate = todayStr()
+      $start.value = startDate
+      $end.value = endDate
+      renderPresets()
+      carregar()
+    })
+
+    $start.addEventListener('change', () => { startDate = $start.value; renderPresets(); carregar() })
+    $end.addEventListener('change', () => { endDate = $end.value; renderPresets(); carregar() })
+
+    function apiUrl(path, extra = '') {
+      return `${PAGE_PREFIX}${path}?group=${encodeURIComponent(groupId)}&start=${startDate}&end=${endDate}${extra}`
+    }
+
+    function buildDateRange() {
+      const out = [], d = new Date(startDate + 'T12:00:00'), fim = new Date(endDate + 'T12:00:00')
+      while (d <= fim) { out.push(localDate(d)); d.setDate(d.getDate() + 1) }
+      return out
+    }
+
+    // Bins por quantis: a distribuição é assimétrica (muitas células com 1-2
+    // ações, poucas com dezenas) e uma escala linear deixaria quase tudo pálido.
+    function quantileBins(valores) {
+      const ord = valores.filter(v => v > 0).sort((a, b) => a - b)
+      if (ord.length === 0) return [1, 2, 3, 4]
+      const q = (p) => ord[Math.min(ord.length - 1, Math.floor(p * ord.length))]
+      const bins = [q(0.2), q(0.4), q(0.6), q(0.8)]
+      for (let i = 1; i < bins.length; i++) if (bins[i] <= bins[i - 1]) bins[i] = bins[i - 1] + 1
+      return bins
+    }
+
+    async function carregarPessoas() {
+      const r = await fetch(apiUrl('/api/stats', '&limit=200'), FETCH_OPTS)
+      const data = await r.json()
+      document.getElementById('title').textContent = data.name || 'Presença'
+      document.title = `WABot — ${data.name || ''} — Presença`
+      pessoas = data.rows || []
+      const sel = document.getElementById('person')
+      sel.innerHTML = pessoas.map(p => `<option value="${p.sender}">${esc(p.name)}</option>`).join('')
+      if (!pessoas.some(p => p.sender === sender)) sender = pessoas[0]?.sender || null
+      if (sender) sel.value = sender
+      sel.onchange = () => { sender = sel.value; renderHeatmap() }
+    }
+
+    const nivelDe = (bins) => (v) =>
+      v <= 0 ? 0 : v <= bins[0] ? 1 : v <= bins[1] ? 2 : v <= bins[2] ? 3 : v <= bins[3] ? 4 : 5
+    const hhmm = (s) => `${String(Math.floor(s / 4)).padStart(2, '0')}:${String((s % 4) * 15).padStart(2, '0')}`
+
+    // fronteira do "ainda não aconteceu", na hora do grupo
+    function agoraNoGrupo() {
+      const tz = window.GROUP_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone
+      const [h, m] = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour12: false }).split(':').map(Number)
+      return { dia: todayStr(), slot: h * 4 + Math.floor(m / 15) }
+    }
+
+    // Monta a grelha. `tooltip(celula)` muda entre o mapa da pessoa e o do
+    // grupo — o resto (janela horária, dias, bins) é igual nos dois.
+    function montarGrelha(visiveis, tooltip, classeDe = null) {
+      const bins = quantileBins(visiveis.map(d => d.eventos))
+      const nivel = nivelDe(bins)
+      const agora = agoraNoGrupo()
+      const porDia = new Map()
+      for (const d of visiveis) {
+        if (!porDia.has(d.dia)) porDia.set(d.dia, new Map())
+        porDia.get(d.dia).set(d.slot, d)
+      }
+
+      let html = '<div class="hm-hours"><span></span>' +
+        [HORA_INICIO, 8, 11, 14].map(h => `<span class="hm-hour">${String(h).padStart(2, '0')}h</span>`).join('') +
+        `<span class="hm-hour" style="display:flex;justify-content:space-between"><span>17h</span><span>${HORA_FIM}h</span></span>` +
+        '</div><div class="hm-grid">'
+
+      for (const dia of buildDateRange()) {
+        const slots = porDia.get(dia) || new Map()
+        const [, m, d] = dia.split('-')
+        html += `<div class="hm-row"><span class="hm-day">${d}/${m}</span>`
+        for (let s = SLOT_INICIO; s < SLOT_FIM; s++) {
+          const c = slots.get(s)
+          const n = nivel(c?.eventos || 0)
+          const futuro = dia === agora.dia && s > agora.slot
+          const cls = c
+            ? (classeDe ? classeDe(c, n) : (n ? 'v' + n : ''))
+            : (futuro ? 'futuro' : '')
+          const t = c
+            ? `${d}/${m} ${hhmm(s)} — ${tooltip(c)}`
+            : `${d}/${m} ${hhmm(s)} — ${futuro ? 'ainda não aconteceu' : 'ausente'}`
+          html += `<div class="hm-cell${cls ? ' ' + cls : ''}" title="${t}"></div>`
+        }
+        html += '</div>'
+      }
+      return { html: html + '</div>', porDia }
+    }
+
+    function legendaFuso() {
+      const tz = window.GROUP_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone
+      return { texto: `${HORA_INICIO}h–${HORA_FIM}h · ${diasNoPeriodo(startDate, endDate)} dias · hora de ${tz.split('/').pop().replace(/_/g, ' ')}`, tz }
+    }
+
+    // --- mapa de presença: cor única, com filtro opcional ---
+    let ultimoVisiveis = []
+    let soAVer = false
+
+    const RAMPA = ['#74501a', '#9d6d1c', '#c68a22', '#e8a832', '#f7d28c']
+
+    function renderMapaPresenca() {
+      const alvo = (soAVer ? ultimoVisiveis.filter(c => (c.acoes || 0) === 0) : ultimoVisiveis)
+        .map(c => ({ ...c, eventos: c.acoes || 0 }))
+      const wrap = document.getElementById('hmWrap')
+
+      wrap.innerHTML = alvo.length
+        ? montarGrelha(
+            alvo,
+            (c) => c.acoes > 0
+              ? `presente · ${c.slots * 5} min · ${c.acoes} ${c.acoes === 1 ? 'ação' : 'ações'}`
+              : `presente · ${c.slots * 5} min · só observou`,
+            // sem ação: anel. Com ação: intensidade na rampa.
+            (c, n) => (c.acoes > 0 ? 'v' + n : soAVer ? 'v3' : 'obs'),
+          ).html
+        : `<div class="hm-empty">${soAVer ? 'Não houve momentos em que só tenha observado.' : 'Sem presença registada neste período.'}</div>`
+
+      document.getElementById('soAVerBtn').classList.toggle('active', soAVer)
+      document.getElementById('legendaMapa').innerHTML = soAVer
+        ? `<i style="background:${RAMPA[2]}"></i><span>momentos em que esteve no grupo sem falar</span>`
+        : `<i class="hm-cell obs" style="width:12px;height:12px"></i><span>só observou</span>` +
+          `<span style="margin-left:10px">participou:</span>` +
+          RAMPA.map(c => `<i style="background:${c}"></i>`).join('') +
+          `<span>mais ativo</span>`
+    }
+
+    document.getElementById('soAVerBtn').addEventListener('click', () => {
+      soAVer = !soAVer
+      renderMapaPresenca()
+    })
+
+    // --- mapa do grupo: não depende da pessoa escolhida, só do período ---
+    async function renderHeatmapGrupo() {
+      const wrap = document.getElementById('hmWrapGrupo')
+      let dados
+      try {
+        const r = await fetch(apiUrl('/api/stats/presence-heatmap'), FETCH_OPTS)
+        dados = await r.json()
+      } catch (err) {
+        wrap.innerHTML = '<div class="hm-empty">Erro ao carregar presença do grupo.</div>'
+        return
+      }
+      const visiveis = (dados || []).filter(d => d.slot >= SLOT_INICIO && d.slot < SLOT_FIM)
+      if (visiveis.length === 0) {
+        wrap.innerHTML = '<div class="hm-empty">Sem presença registada neste período.</div>'
+        document.getElementById('totalsGrupo').innerHTML = ''
+        document.getElementById('hmSubGrupo').textContent = ''
+        return
+      }
+
+      const { html, porDia } = montarGrelha(visiveis, (c) =>
+        `${c.pessoas} ${c.pessoas === 1 ? 'pessoa' : 'pessoas'} · ${c.eventos} ${c.eventos === 1 ? 'ação' : 'ações'}`)
+      wrap.innerHTML = html
+
+      const leg = legendaFuso()
+      const sub = document.getElementById('hmSubGrupo')
+      sub.textContent = leg.texto
+      sub.title = leg.tz
+
+      const acoes = visiveis.reduce((a, c) => a + c.eventos, 0)
+      const picoPessoas = Math.max(...visiveis.map(c => c.pessoas))
+
+      // hora e dia da semana com mais gente — o que responde a "quando é que
+      // vale a pena falar com o grupo"
+      const porHora = new Array(24).fill(0)
+      const porSemana = new Array(7).fill(0)
+      const diasDistintos = new Array(7).fill(0)
+      const vistos = new Set()
+      for (const c of visiveis) {
+        porHora[Math.floor(c.slot / 4)] += c.pessoas
+        const dow = new Date(c.dia + 'T12:00:00').getDay()
+        porSemana[dow] += c.pessoas
+        const chave = dow + ':' + c.dia
+        if (!vistos.has(chave)) { vistos.add(chave); diasDistintos[dow]++ }
+      }
+      const melhorHora = porHora.indexOf(Math.max(...porHora))
+      // normaliza pelo nº de vezes que cada dia da semana ocorre no período,
+      // senão um período de 10 dias favorece os dias que aparecem duas vezes
+      const mediaSemana = porSemana.map((v, i) => diasDistintos[i] ? v / diasDistintos[i] : 0)
+      const melhorDow = mediaSemana.indexOf(Math.max(...mediaSemana))
+      const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+
+      document.getElementById('totalsGrupo').innerHTML = `
+        <div class="total-item"><b>${String(melhorHora).padStart(2, '0')}h–${String(melhorHora + 1).padStart(2, '0')}h</b>hora com mais gente</div>
+        <div class="total-item"><b>${DIAS_SEMANA[melhorDow]}</b>dia mais ativo</div>
+        <div class="total-item"><b>${picoPessoas}</b>pico de pessoas juntas</div>
+        <div class="total-item"><b>${acoes}</b>ações no grupo</div>
+        <div class="total-item"><b>${porDia.size}</b>dias com atividade</div>`
+    }
+
+    async function renderHeatmap() {
+      const wrap = document.getElementById('hmWrap')
+      if (!sender) { wrap.innerHTML = '<div class="hm-empty">Sem membros no período.</div>'; return }
+
+      let dados
+      try {
+        const r = await fetch(apiUrl('/api/stats/presence-heatmap', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
+        dados = await r.json()
+      } catch (err) {
+        wrap.innerHTML = '<div class="hm-empty">Erro ao carregar presença.</div>'
+        return
+      }
+
+      const visiveis = (dados || []).filter(d => d.slot >= SLOT_INICIO && d.slot < SLOT_FIM)
+      if (visiveis.length === 0) {
+        ultimoVisiveis = []
+        renderMapaPresenca()
+        document.getElementById('totals').innerHTML = ''
+        document.getElementById('hmSub').textContent = ''
+        return
+      }
+
+      // Duas grelhas separadas em vez de duas cores no mesmo mapa: a cor já
+      // codifica intensidade e não pode codificar também o tipo de presença.
+      const { porDia } = montarGrelha(visiveis, () => '')
+      // o mapa é redesenhado sozinho quando o filtro muda, sem ir buscar dados
+      ultimoVisiveis = visiveis
+      renderMapaPresenca()
+
+      const minutos = visiveis.reduce((a, c) => a + c.slots * 5, 0)
+      const acoes = visiveis.reduce((a, c) => a + (c.acoes || 0), 0)
+      // momentos em que esteve presente sem participar — a diferença entre os
+      // dois mapas, agora legível como número
+      const soAVer = visiveis.filter(c => (c.acoes || 0) === 0).length
+      const diasAtivos = porDia.size
+
+      // as horas são as do grupo, não as de quem está a ver
+      const leg = legendaFuso()
+      const sub = document.getElementById('hmSub')
+      sub.textContent = leg.texto
+      sub.title = leg.tz
+
+      document.getElementById('totals').innerHTML = `
+        <div class="total-item"><b>${Math.floor(minutos / 60)}h${String(minutos % 60).padStart(2, '0')}</b>tempo presente</div>
+        <div class="total-item"><b>${acoes}</b>ações</div>
+        <div class="total-item"><b>${soAVer}</b>momentos só a ver</div>
+        <div class="total-item"><b>${diasAtivos}</b>dias com atividade</div>`
+    }
+
+    async function carregar() {
+      if (!validarPeriodo()) return
+      await carregarPessoas()
+      // o mapa do grupo não depende da pessoa escolhida; só é refeito aqui,
+      // quando as datas mudam
+      await Promise.all([renderHeatmap(), renderHeatmapGrupo()])
+      document.body.classList.add('loaded')
+    }
+
+    $start.value = startDate
+    $end.value = endDate
+    renderPresets()
+    carregar()
+    initPullToRefresh(carregar)
+  </script>
+</body>
+</html>

@@ -151,6 +151,27 @@
       color: var(--text-muted);
     }
 
+    .badge-milestones {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .badge-tz {
+      background: var(--surface);
+      color: var(--text-secondary);
+    }
+
+    .tz-select {
+      font-family: var(--font-body); font-size: 0.85rem;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; cursor: pointer; max-width: 220px;
+      /* sem isto o browser desenha a lista aberta com o tema claro */
+      color-scheme: dark;
+    }
+    .tz-select option { background: #14151a; color: var(--text); }
+    .tz-select:focus { outline: none; border-color: var(--border-accent); }
+
     .group-expand {
       color: var(--text-muted);
       font-size: 1.2rem;
@@ -486,6 +507,30 @@
       load()
     }
 
+    const TIMEZONES = [
+      ['Europe/Lisbon', 'Lisboa (Portugal)'],
+      ['America/Recife', 'Recife (Pernambuco)'],
+      ['America/Sao_Paulo', 'São Paulo / Brasília'],
+      ['America/Fortaleza', 'Fortaleza (Ceará)'],
+      ['America/Manaus', 'Manaus (Amazonas)'],
+      ['Europe/Madrid', 'Madrid'],
+      ['Europe/London', 'Londres'],
+      ['America/New_York', 'Nova Iorque'],
+      ['UTC', 'UTC'],
+    ]
+
+    async function updateTimezone(groupId, timezone) {
+      await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/timezone`, { timezone })
+      showToast(`Fuso alterado para ${timezone}`)
+      load()
+    }
+
+    async function toggleMilestones(groupId, checked) {
+      await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/milestones`, { enabled: checked })
+      showToast(checked ? 'Milestones ativados' : 'Milestones desativados')
+      load()
+    }
+
     async function toggleGlobalCommand(cmd, enabledChecked) {
       await api('PUT', `/api/config/global/commands/${encodeURIComponent(cmd)}`, { disabled: !enabledChecked })
       showToast(enabledChecked ? `${cmd} ativado globalmente` : `${cmd} desativado globalmente`)
@@ -734,6 +779,8 @@
       let badges = ''
       if (g.listening) badges += '<span class="badge badge-listening">Ativo</span>'
       if (g.troll_mode) badges += '<span class="badge badge-troll">Troll</span>'
+      if (g.milestones) badges += '<span class="badge badge-milestones">🏆 Milestones</span>'
+      if (g.timezone && g.timezone !== 'Europe/Lisbon') badges += `<span class="badge badge-tz">${esc(g.timezone)}</span>`
       if (g.disabled_commands.length > 0) badges += `<span class="badge badge-disabled">${g.disabled_commands.length} cmd off</span>`
 
       return `
@@ -768,6 +815,27 @@
                   <input type="checkbox" ${g.troll_mode ? 'checked' : ''} onchange="toggleTroll('${g.id}', this.checked)">
                   <span class="toggle-track"></span>
                 </label>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Milestones e prémios</div>
+                  <div class="toggle-desc">Milestones de 100, 150 e 180 mensagens num dia (uma vez por pessoa) e, ao domingo, o prémio BISOU, HAT TRICK ou POKER de quem lidera os rankings (repetível)</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" ${g.milestones ? 'checked' : ''} onchange="toggleMilestones('${g.id}', this.checked)">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Fuso horário</div>
+                  <div class="toggle-desc">Em que fuso os dias são contados e apresentados — no ranking, no calendário e nos marcos</div>
+                </div>
+                <select class="tz-select" onchange="updateTimezone('${g.id}', this.value)">
+                  ${TIMEZONES.concat(TIMEZONES.some(t => t[0] === g.timezone) ? [] : [[g.timezone, g.timezone]])
+                    .map(([tz, rotulo]) => `<option value="${tz}"${tz === g.timezone ? ' selected' : ''}>${esc(rotulo)}</option>`)
+                    .join('')}
+                </select>
               </div>
               <div class="toggle-row">
                 <div>

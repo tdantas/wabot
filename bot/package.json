@@ -4,7 +4,8 @@
   "description": "",
   "main": "wa.js",
   "scripts": {
-    "start": "node wa.js"
+    "start": "node wa.js",
+    "backfill:presence": "node backfill-presence.js"
   },
   "keywords": [],
   "author": "",

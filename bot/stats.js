@@ -1,6 +1,8 @@
 const { sql } = require('./db')
+const settings = require('./settings')
 
-const TZ = process.env.TZ || 'Europe/Lisbon'
+// Cada consulta corre no fuso do grupo (configurável na UI): as funções abaixo
+// resolvem-no num `TZ` local, que as queries interpolam.
 
 const ACTIVITY_TYPES = {
   TEXT_MESSAGE: 'TEXT_MESSAGE',
@@ -30,7 +32,10 @@ async function track(groupId, sender, activityType = ACTIVITY_TYPES.TEXT_MESSAGE
 
 // --- query helpers (direct from events hypertable) ---
 
+// `days` conta dias de calendário incluindo hoje, igual aos filtros da UI:
+// 7 dias = da meia-noite de há 6 dias até agora.
 async function getRanking(groupId, days) {
+  const TZ = await settings.getTimezone(groupId)
   let rows
   if (days === 0) {
     rows = await sql`
@@ -43,7 +48,7 @@ async function getRanking(groupId, days) {
     rows = await sql`
       SELECT sender, COUNT(*)::int as count FROM events
       WHERE group_id = ${groupId}
-        AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - ${days + ' days'}::interval)
+        AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - ${(days - 1) + ' days'}::interval)
       GROUP BY sender ORDER BY count DESC
     `
   }
@@ -59,6 +64,7 @@ async function getToday(groupId) {
 }
 
 async function getWeek(groupId) {
+  const TZ = await settings.getTimezone(groupId)
   const rows = await sql`
     SELECT sender, COUNT(*)::int as count FROM events
     WHERE group_id = ${groupId}
@@ -73,6 +79,7 @@ async function getWeek(groupId) {
 }
 
 async function getMonth(groupId) {
+  const TZ = await settings.getTimezone(groupId)
   const rows = await sql`
     SELECT sender, COUNT(*)::int as count FROM events
     WHERE group_id = ${groupId}
@@ -87,6 +94,7 @@ async function getMonth(groupId) {
 }
 
 async function getYear(groupId, year) {
+  const TZ = await settings.getTimezone(groupId)
   const rows = await sql`
     SELECT sender, COUNT(*)::int as count FROM events
     WHERE group_id = ${groupId}
@@ -102,8 +110,9 @@ async function getYear(groupId, year) {
 }
 
 async function getBusiestDay(groupId) {
+  const TZ = await settings.getTimezone(groupId)
   return sql`
-    SELECT EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    SELECT EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
     WHERE group_id = ${groupId}
       AND created_at >= (date_trunc('day', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '7 days')
     GROUP BY day_of_week ORDER BY total DESC
@@ -111,6 +120,7 @@ async function getBusiestDay(groupId) {
 }
 
 async function getBusiestPeriod(groupId) {
+  const TZ = await settings.getTimezone(groupId)
   return sql`
     SELECT CASE WHEN EXTRACT(HOUR FROM created_at AT TIME ZONE ${TZ}) BETWEEN 6 AND 17 THEN 'manha' ELSE 'noite' END as period,
            COUNT(*)::int as total FROM events
@@ -121,20 +131,22 @@ async function getBusiestPeriod(groupId) {
 }
 
 async function getWeekDaily(groupId) {
+  const TZ = await settings.getTimezone(groupId)
   return sql`
-    SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
     WHERE group_id = ${groupId}
       AND created_at >= (date_trunc('week', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '1 day')
-    GROUP BY created_at::date, day_of_week ORDER BY date
+    GROUP BY 1, 2 ORDER BY date
   `
 }
 
 async function getWeekUserDaily(groupId, sender) {
+  const TZ = await settings.getTimezone(groupId)
   return sql`
-    SELECT created_at::date as date, EXTRACT(DOW FROM created_at)::int as day_of_week, COUNT(*)::int as total FROM events
+    SELECT (created_at AT TIME ZONE ${TZ})::date as date, EXTRACT(DOW FROM created_at AT TIME ZONE ${TZ})::int as day_of_week, COUNT(*)::int as total FROM events
     WHERE group_id = ${groupId} AND sender = ${sender}
       AND created_at >= (date_trunc('week', NOW() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ} - INTERVAL '1 day')
-    GROUP BY created_at::date, day_of_week ORDER BY date
+    GROUP BY 1, 2 ORDER BY date
   `
 }
 

@@ -689,7 +689,9 @@
 
     // --- date helpers ---
     function localDate(d) {
-      return d.toLocaleString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour12: false }).split(', ')[0]
+      // fuso do grupo (window.GROUP_TZ), não o de quem está a ver
+      const tz = window.GROUP_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone
+      return d.toLocaleString('en-CA', { timeZone: tz, hour12: false }).split(', ')[0]
     }
     function todayStr() { return localDate(new Date()) }
     function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localDate(d) }

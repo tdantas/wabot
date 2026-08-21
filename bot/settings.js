@@ -16,6 +16,45 @@ async function getListeningGroupIds() {
   return rows.map(r => r.group_id)
 }
 
+const DEFAULT_TZ = process.env.TZ || 'Europe/Lisbon'
+const TZ_CACHE_MS = 60 * 1000
+const tzCache = new Map() // group_id → { tz, at }
+
+// Fuso de apresentação do grupo. O bot e o servidor são processos separados,
+// por isso a cache é curta: uma alteração na UI entra em vigor em <= 1 min.
+async function getTimezone(groupId) {
+  const hit = tzCache.get(groupId)
+  if (hit && Date.now() - hit.at < TZ_CACHE_MS) return hit.tz
+  const [row] = await sql`SELECT timezone FROM group_settings WHERE group_id = ${groupId}`
+  const tz = row?.timezone || DEFAULT_TZ
+  tzCache.set(groupId, { tz, at: Date.now() })
+  return tz
+}
+
+async function setTimezone(groupId, timezone) {
+  await sql`UPDATE group_settings SET timezone = ${timezone} WHERE group_id = ${groupId}`
+  tzCache.delete(groupId)
+}
+
+// aceita qualquer zona IANA que o Node conheça
+function isValidTimezone(tz) {
+  if (typeof tz !== 'string' || !tz) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// grupos que recebem marcos: opt-in, e só faz sentido com escuta ativa
+async function getMilestoneGroupIds() {
+  const rows = await sql`
+    SELECT group_id FROM group_settings WHERE listening = TRUE AND milestones = TRUE
+  `
+  return rows.map(r => r.group_id)
+}
+
 async function upsertGroup(groupId, fields) {
   const [current] = await sql`SELECT * FROM group_settings WHERE group_id = ${groupId}`
   if (!current) {
@@ -182,6 +221,11 @@ async function syncCommands(commandList) {
 module.exports = {
   getGroups,
   getListeningGroupIds,
+  getMilestoneGroupIds,
+  getTimezone,
+  setTimezone,
+  isValidTimezone,
+  DEFAULT_TZ,
   upsertGroup,
   ensureGroup,
   isTroll,

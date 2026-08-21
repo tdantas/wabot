@@ -2,6 +2,7 @@
 *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
+  color-scheme: dark;
   --bg: #0a0b0f;
   --surface: rgba(255,255,255,0.035);
   --surface-raised: rgba(255,255,255,0.055);

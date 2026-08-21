@@ -23,7 +23,8 @@
 
     /* --- month nav --- */
     .month-nav {
-      display: flex; align-items: center; gap: 12px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      gap: 12px; margin: 0 0 20px;
     }
     .month-nav-btn {
       font-family: var(--font-body); font-size: 0.8rem; font-weight: 500;
@@ -44,11 +45,6 @@
     /* --- top 3 bar --- */
     .top-bar {
       display: flex; gap: 16px; justify-content: center; margin-bottom: 28px;
-    }
-    .top-bar-title {
-      font-family: var(--font-display); font-weight: 800;
-      font-size: 0.82rem; letter-spacing: 0.5px; text-transform: uppercase;
-      color: var(--text-muted); text-align: center; margin-bottom: 12px;
     }
     .top-card {
       background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
@@ -119,8 +115,16 @@
       max-width: 100%;
     }
     .cal-count {
+      display: flex; align-items: baseline; justify-content: center; gap: 3px;
+      white-space: nowrap; max-width: 100%;
+    }
+    .cal-count-num {
       font-family: var(--font-display);
       font-size: 0.82rem; color: var(--text); font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .cal-count-unit {
+      font-size: 0.62rem; color: var(--text-muted); font-weight: 500;
     }
     .cal-day-name {
       font-size: 0.6rem; color: var(--text-muted); font-weight: 400;
@@ -134,6 +138,8 @@
       .cal-avatar { width: 34px; height: 34px; font-size: 0.75rem; }
       .cal-name { font-size: 0.7rem; }
       .cal-date { font-size: 0.78rem; }
+      .cal-count-unit { display: none; }
+      .cal-count-num { font-size: 0.78rem; }
       .top-bar { gap: 10px; }
       .top-card { padding: 12px 8px; }
       .top-avatar { width: 36px; height: 36px; font-size: 0.8rem; }
@@ -148,14 +154,14 @@
 
   <div class="topbar">
     <span class="topbar-title" id="title">Calendário</span>
+  </div>
+
+  <div class="container">
     <div class="month-nav">
       <button class="month-nav-btn" id="prevMonth">&larr;</button>
       <span class="month-label" id="monthLabel"></span>
       <button class="month-nav-btn" id="nextMonth">&rarr;</button>
     </div>
-  </div>
-
-  <div class="container">
     <div class="ui-loading">
       <div style="display:flex;gap:12px;margin-bottom:20px">
         <div class="ui-shimmer" style="height:90px;flex:1;border-radius:14px"></div>
@@ -187,7 +193,6 @@
       </div>
     </div>
     <div class="data-content">
-      <div class="top-bar-title" id="topBarTitle">Top 3 do mês</div>
       <div class="top-bar" id="topBar"></div>
       <div class="calendar-grid" id="calendarGrid"></div>
     </div>
@@ -288,7 +293,7 @@
               <div class="cal-date">${day}</div>
               <div class="cal-avatar" style="background:${color}">${getInitials(winner.name)}</div>
               <div class="cal-name" title="${esc(winner.name)}">${esc(winner.name.split(' ')[0])}</div>
-              <div class="cal-count">${winner.total} ativ</div>
+              <div class="cal-count"><span class="cal-count-num">${winner.total}</span><span class="cal-count-unit">ativ</span></div>
             </div>`
         } else {
           html += `
@@ -300,9 +305,19 @@
 
       document.getElementById('calendarGrid').innerHTML = html
 
-      // --- top 3 bar ---
+      // --- top 3 bar: quem venceu mais dias no mês ---
       const RANK_LABELS = ['1º lugar', '2º lugar', '3º lugar']
-      const top3 = stats.rows.slice(0, 3)
+      const totals = new Map(stats.rows.map(r => [r.sender, r.count]))
+      const wins = new Map()
+      for (const w of winners) {
+        const entry = wins.get(w.sender) || { sender: w.sender, name: w.name, days: 0 }
+        entry.days++
+        wins.set(w.sender, entry)
+      }
+      // desempate pelo total de atividades do mês
+      const top3 = [...wins.values()]
+        .sort((a, b) => b.days - a.days || (totals.get(b.sender) || 0) - (totals.get(a.sender) || 0))
+        .slice(0, 3)
       let topHtml = ''
       top3.forEach((u, i) => {
         const color = getColor(u.sender)
@@ -311,11 +326,10 @@
             <div class="top-rank top-rank--${i + 1}">${RANK_LABELS[i]}</div>
             <div class="top-avatar" style="background:${color}">${getInitials(u.name)}</div>
             <div class="top-name" title="${esc(u.name)}">${esc(u.name)}</div>
-            <div class="top-count">${u.count}</div>
-            <div class="top-label">atividades</div>
+            <div class="top-count">${u.days}</div>
+            <div class="top-label">${u.days === 1 ? 'dia em 1º' : 'dias em 1º'}</div>
           </div>`
       })
-      document.getElementById('topBarTitle').style.display = top3.length ? '' : 'none'
       document.getElementById('topBar').innerHTML = topHtml
 
       requestAnimationFrame(() => document.body.classList.add('loaded'))

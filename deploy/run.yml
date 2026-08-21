@@ -1,0 +1,27 @@
+# Corre um comando pontual dentro do container do bot já em execução.
+#   ansible-playbook ... run.yml -e 'cmd="node backfill-presence.js --dry-run"'
+#   ansible-playbook ... run.yml -e 'cmd_raw="docker compose logs --tail=100 bot"'
+- name: Comando pontual na app
+  hosts: all
+  become: false
+  vars:
+    wabot_dir: /opt/wabot
+    cmd: ""
+    cmd_raw: ""
+  tasks:
+    - name: Falha se nenhum comando foi indicado
+      ansible.builtin.fail:
+        msg: "Indica -e 'cmd=\"...\"' (dentro do container do bot) ou -e 'cmd_raw=\"...\"' (no host)"
+      when: cmd | length == 0 and cmd_raw | length == 0
+
+    - name: Executar
+      ansible.builtin.shell: >
+        {{ cmd_raw if cmd_raw | length > 0 else 'docker compose exec -T bot ' + cmd }}
+      args:
+        chdir: "{{ wabot_dir }}"
+      register: saida
+      changed_when: false
+
+    - name: Saída
+      ansible.builtin.debug:
+        msg: "{{ saida.stdout_lines }}"
