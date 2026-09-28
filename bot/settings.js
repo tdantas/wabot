@@ -47,6 +47,43 @@ function isValidTimezone(tz) {
   }
 }
 
+// --- membros omitidos da apresentação ---
+// Os eventos continuam a ser gravados; isto só esconde a pessoa das leituras.
+const OMIT_CACHE_MS = 60 * 1000
+const omitCache = new Map() // group_id → { set, at }
+
+async function getOmitted(groupId) {
+  const hit = omitCache.get(groupId)
+  if (hit && Date.now() - hit.at < OMIT_CACHE_MS) return hit.set
+  const rows = await sql`SELECT sender FROM omitted_members WHERE group_id = ${groupId}`
+  const set = new Set(rows.map(r => r.sender))
+  omitCache.set(groupId, { set, at: Date.now() })
+  return set
+}
+
+async function setOmitted(groupId, sender, omitted) {
+  if (omitted) {
+    await sql`
+      INSERT INTO omitted_members (group_id, sender) VALUES (${groupId}, ${sender})
+      ON CONFLICT DO NOTHING
+    `
+  } else {
+    await sql`DELETE FROM omitted_members WHERE group_id = ${groupId} AND sender = ${sender}`
+  }
+  omitCache.delete(groupId)
+}
+
+// remove os omitidos de um mapa { sender: contagem }
+async function filterOmitted(groupId, mapa) {
+  const ocultos = await getOmitted(groupId)
+  if (ocultos.size === 0) return mapa
+  const out = {}
+  for (const [sender, valor] of Object.entries(mapa)) {
+    if (!ocultos.has(sender)) out[sender] = valor
+  }
+  return out
+}
+
 // grupos que recebem marcos: opt-in, e só faz sentido com escuta ativa
 async function getMilestoneGroupIds() {
   const rows = await sql`
@@ -222,6 +259,9 @@ module.exports = {
   getGroups,
   getListeningGroupIds,
   getMilestoneGroupIds,
+  getOmitted,
+  setOmitted,
+  filterOmitted,
   getTimezone,
   setTimezone,
   isValidTimezone,

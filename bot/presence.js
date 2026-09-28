@@ -39,6 +39,10 @@ function bucketOf(date) {
 const PASSIVAS = new Set(['leitura', 'online'])
 
 function seen(groupId, sender, at = new Date(), origem = 'outro') {
+  // O JID do grupo não é uma pessoa: aparecia quando `key.participant` vinha
+  // vazio e o chamador caía no `remoteJid`, criando um "membro" com o nome do
+  // grupo nas listas.
+  if (!groupId || !sender || sender === groupId) return
   porOrigem.set(origem, (porOrigem.get(origem) || 0) + 1)
   const bucket = bucketOf(at)
   const key = `${groupId}:${sender}:${bucket.getTime()}`

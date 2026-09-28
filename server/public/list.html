@@ -15,6 +15,41 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="shared.css">
   <link rel="stylesheet" href="ranking.css">
+  <style>
+    .premio-rows { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; }
+    .premio-row {
+      display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+      padding: 7px 10px; border-radius: 8px; font-size: 0.82rem;
+    }
+    .premio-row:nth-child(odd) { background: rgba(255,255,255,0.02); }
+    .premio-semana { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 0.75rem; white-space: nowrap; }
+    .premio-tipo { color: var(--text); }
+    .premio-pts { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .premio-resumo { color: var(--text-muted); font-size: 0.75rem; margin-left: 4px; }
+
+    /* com três abas, num ecrã estreito a última passa para a linha de baixo */
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .tab {
+      font-family: var(--font-body); font-size: 0.78rem; font-weight: 500;
+      padding: 9px 14px; border-radius: 8px; min-height: 40px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+    }
+    .tab.active { background: var(--accent-soft); border-color: var(--border-accent); color: var(--accent); }
+    .obs-note { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px; }
+
+    .tipo-rows { display: flex; flex-direction: column; gap: 8px; }
+    .tipo-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; }
+    .tipo-label { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; }
+    .tipo-track { height: 8px; background: rgba(255,255,255,0.04); border-radius: 4px; overflow: hidden; }
+    .tipo-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+    .tipo-count {
+      font-family: var(--font-display); font-weight: 700; font-size: 0.85rem;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .tipo-count small { font-weight: 500; font-size: 0.65rem; color: var(--text-muted); margin-left: 4px; }
+    @media (max-width: 560px) { .tipo-row { grid-template-columns: 96px 1fr auto; } }
+  </style>
 </head>
 <body>
   <div class="bg-glow bg-glow--1"></div>
@@ -76,6 +111,12 @@
           <div class="ui-shimmer" style="width:20px;height:18px;border-radius:4px"></div>
         </div>
       </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="ranking">Ranking</button>
+      <button class="tab" data-tab="observadores">Só observam</button>
+      <button class="tab" data-tab="premios">Prêmios</button>
     </div>
 
     <div id="card" class="data-content"></div>
@@ -222,9 +263,14 @@
       }
       const userEntries = [...openDrilldowns.users.entries()]
       for (const [sender] of userEntries) {
-        fetches.push(fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS))
+        // o drilldown de pessoa é por tipo; usar aqui o endpoint antigo
+        // sobrepunha as linhas com dados por dia, sem o campo `tipo`
+        fetches.push(fetch(apiUrl('/api/stats/user-types', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS))
       }
 
+      observadores = null // período mudou: os observadores têm de ser relidos
+      premios = null
+      premiosAbertos.clear()
       const responses = await Promise.all(fetches)
       const data = await responses[0].json()
 
@@ -238,6 +284,8 @@
 
       document.getElementById('title').textContent = data.name
       document.title = `WABot — ${data.name}`
+      if (abaAtiva === 'observadores') await carregarObservadores()
+      if (abaAtiva === 'premios') await carregarPremios()
       render(data)
     }
 
@@ -251,10 +299,55 @@
 
     async function loadUserDrilldown(sender, name) {
       if (openDrilldowns.users.has(sender)) { openDrilldowns.users.delete(sender); fetchStats(); return }
-      const res = await fetch(apiUrl('/api/stats/user-daily', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
+      const res = await fetch(apiUrl('/api/stats/user-types', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
       const rows = await res.json()
-      openDrilldowns.users.set(sender, { rows, title: `${name} — por dia`, isNew: true })
+      openDrilldowns.users.set(sender, { rows, title: `${name} — por tipo`, isNew: true, tipos: true })
       fetchStats()
+    }
+
+    // rótulo e ícone de cada tipo de atividade
+    const TIPOS = {
+      text: ['💬', 'Texto'],
+      sticker: ['🩹', 'Figurinhas'],
+      image: ['🖼️', 'Fotos'],
+      video: ['🎬', 'Vídeos'],
+      audio: ['🎙️', 'Áudios'],
+      document: ['📄', 'Documentos'],
+      media: ['📎', 'Média'],
+      reaction: ['❤️', 'Reações'],
+    }
+
+    function renderTipos(rows, title, closeKey, isNew) {
+      const closeAttr = `onclick="event.stopPropagation(); closeDrilldown('${closeKey}')"`
+      const animClass = isNew ? ' is-new' : ''
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return `<div class="drilldown${animClass}">
+          <div class="drilldown-header"><span class="drilldown-title">${title}</span>
+          <button class="drilldown-close" ${closeAttr}>&times;</button></div>
+          <div class="empty">Sem dados</div></div>`
+      }
+      const total = rows.reduce((a, r) => a + r.total, 0)
+      const max = rows[0].total || 1
+      return `
+        <div class="drilldown${animClass}">
+          <div class="drilldown-header">
+            <span class="drilldown-title">${title}</span>
+            <button class="drilldown-close" ${closeAttr}>&times;</button>
+          </div>
+          <div class="tipo-rows">
+            ${rows.map(r => {
+              const [icone, rotulo] = TIPOS[r.tipo] || ['•', r.tipo || 'outro']
+              const pct = (r.total / max * 100).toFixed(1)
+              const share = total ? Math.round(r.total / total * 100) : 0
+              return `
+                <div class="tipo-row">
+                  <span class="tipo-label">${icone} ${rotulo}</span>
+                  <div class="tipo-track"><div class="tipo-fill" style="width:${pct}%"></div></div>
+                  <span class="tipo-count">${r.total}<small>${share}%</small></span>
+                </div>`
+            }).join('')}
+          </div>
+        </div>`
     }
 
     function closeDrilldown(key) {
@@ -341,7 +434,9 @@
         let userDrilldown = ''
         if (item.sender && openDrilldowns.users.has(item.sender)) {
           const dd = openDrilldowns.users.get(item.sender)
-          userDrilldown = renderDrilldown(dd.rows, dd.title, item.sender, dd.isNew)
+          userDrilldown = dd.tipos
+            ? renderTipos(dd.rows, dd.title, item.sender, dd.isNew)
+            : renderDrilldown(dd.rows, dd.title, item.sender, dd.isNew)
           dd.isNew = false
         }
         const barPct = (item.count / maxCount * 100).toFixed(0)
@@ -362,7 +457,166 @@
       }).join('')}</div>`
     }
 
+    // --- aba "só observam" ---
+    let abaAtiva = 'ranking'
+    let observadores = null
+
+    document.getElementById('tabs').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-tab]')
+      if (!btn || btn.dataset.tab === abaAtiva) return
+      abaAtiva = btn.dataset.tab
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === abaAtiva))
+      document.getElementById('topbarShare').style.display = abaAtiva === 'ranking' && canShare() ? '' : 'none'
+      if (abaAtiva === 'observadores' && !observadores) await carregarObservadores()
+      if (abaAtiva === 'premios' && !premios) await carregarPremios()
+      render(window._ultimoStats)
+    })
+
+    async function carregarObservadores() {
+      try {
+        const r = await fetch(apiUrl('/api/stats/observers'), FETCH_OPTS)
+        observadores = await r.json()
+      } catch (err) {
+        observadores = []
+      }
+    }
+
+    function renderObservadores() {
+      if (!observadores || observadores.length === 0) {
+        return `<div class="section"><div class="section-header"><span class="section-label">Só observam</span></div>
+          <div class="empty">Ainda não há presença registada neste período.</div></div>`
+      }
+      const max = observadores[0].observou || 1
+
+      return `
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">Só observam</span>
+            <span class="section-badge">top ${observadores.length}</span>
+          </div>
+          <div class="obs-note">Quantas vezes estiveram no grupo sem escrever, reagir ou editar nada.</div>
+          <div class="rank-list">${observadores.map((o, i) => {
+            const pct = (o.observou / max * 100).toFixed(0)
+            const posAttr = i < 3 ? ` data-pos="${i + 1}"` : ''
+            return `
+              <div class="rank-item"${posAttr}>
+                <span class="rank-pos">${i + 1}</span>
+                <div class="rank-main">
+                  <span class="rank-name">${esc(o.name)}</span>
+                  <div class="rank-bar-track"><div class="rank-bar-fill" style="width:${pct}%"></div></div>
+                </div>
+                <span class="rank-count">${o.observou}<small>${o.observou === 1 ? 'vez' : 'vezes'}</small></span>
+              </div>`
+          }).join('')}</div>
+        </div>`
+    }
+
+    // --- aba "prêmios" ---
+    // Os prémios de domingo: BISOU (7 e 15 dias), HAT TRICK (+21) e POKER
+    // (+30). Cada janela liderada vale um ponto.
+    const PREMIOS = {
+      POKER: ['🏆', 'POKER'],
+      HAT_TRICK: ['🥇', 'HAT TRICK'],
+      BISOU: ['🎖️', 'BISOU'],
+    }
+    let premios = null
+    const premiosAbertos = new Map() // sender → linhas do detalhe
+
+    async function carregarPremios() {
+      try {
+        const r = await fetch(apiUrl('/api/stats/awards'), FETCH_OPTS)
+        premios = await r.json()
+        // reabre os detalhes que estavam abertos, já no período novo
+        for (const sender of [...premiosAbertos.keys()]) await carregarDetalhePremios(sender, false)
+      } catch (err) {
+        premios = []
+      }
+    }
+
+    async function carregarDetalhePremios(sender, redesenhar = true) {
+      try {
+        const r = await fetch(apiUrl('/api/stats/awards-detail', `&sender=${encodeURIComponent(sender)}`), FETCH_OPTS)
+        premiosAbertos.set(sender, await r.json())
+      } catch (err) {
+        premiosAbertos.set(sender, [])
+      }
+      if (redesenhar) render(window._ultimoStats)
+    }
+
+    async function togglePremios(sender) {
+      if (premiosAbertos.has(sender)) {
+        premiosAbertos.delete(sender)
+        render(window._ultimoStats)
+        return
+      }
+      await carregarDetalhePremios(sender)
+    }
+
+    function renderDetalhePremios(sender) {
+      const linhas = premiosAbertos.get(sender) || []
+      const corpo = linhas.length === 0
+        ? '<div class="empty">Sem prêmios neste período</div>'
+        : `<div class="premio-rows">${linhas.map(l => {
+            const [icone, rotulo] = PREMIOS[l.type] || ['•', l.type]
+            return `
+              <div class="premio-row">
+                <span class="premio-semana">${l.semana_inicio} – ${l.semana_fim}</span>
+                <span class="premio-tipo">${icone} ${rotulo}</span>
+                <span class="premio-pts">+${l.pontos}</span>
+              </div>`
+          }).join('')}</div>`
+      return `
+        <div class="drilldown is-new">
+          <div class="drilldown-header">
+            <span class="drilldown-title">Semanas ganhas</span>
+            <button class="drilldown-close" onclick="event.stopPropagation(); togglePremios('${sender}')">&times;</button>
+          </div>
+          ${corpo}
+        </div>`
+    }
+
+    function renderPremios() {
+      if (!premios || premios.length === 0) {
+        return `<div class="section"><div class="section-header"><span class="section-label">Prêmios</span></div>
+          <div class="empty">Nenhum prêmio neste período.</div></div>`
+      }
+      const max = premios[0].pontos || 1
+      return `
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">Prêmios</span>
+            <span class="section-badge">${premios.reduce((a, p) => a + p.premios, 0)} no total</span>
+          </div>
+          <div class="obs-note">Pontos dos prêmios de domingo: BISOU 2, HAT TRICK 3, POKER 4. Clica em alguém para ver as semanas.</div>
+          <div class="rank-list">${premios.map((p, i) => {
+            const pct = (p.pontos / max * 100).toFixed(0)
+            const posAttr = i < 3 ? ` data-pos="${i + 1}"` : ''
+            const resumo = Object.entries(p.tipos)
+              .map(([t, n]) => `${(PREMIOS[t] || ['•'])[0]}${n > 1 ? ' ' + n : ''}`).join(' ')
+            return `
+              <div class="rank-item clickable"${posAttr} onclick="togglePremios('${p.sender}')">
+                <span class="rank-pos">${i + 1}</span>
+                <div class="rank-main">
+                  <span class="rank-name">${esc(p.name)} <small class="premio-resumo">${resumo}</small></span>
+                  <div class="rank-bar-track"><div class="rank-bar-fill" style="width:${pct}%"></div></div>
+                </div>
+                <span class="rank-count">${p.pontos}<small>pts</small></span>
+              </div>
+              ${premiosAbertos.has(p.sender) ? renderDetalhePremios(p.sender) : ''}`
+          }).join('')}</div>
+        </div>`
+    }
+
     function render(data) {
+      window._ultimoStats = data
+      if (abaAtiva === 'observadores') {
+        document.getElementById('card').innerHTML = renderObservadores()
+        return
+      }
+      if (abaAtiva === 'premios') {
+        document.getElementById('card').innerHTML = renderPremios()
+        return
+      }
       const card = document.getElementById('card')
       const maxCount = data.rows[0]?.count || 1
       const total = data.rows.reduce((s, r) => s + r.count, 0)

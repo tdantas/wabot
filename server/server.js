@@ -167,6 +167,19 @@ async function groupTz(groupId) {
   return tz
 }
 
+const omitCache = new Map() // group_id → { lista, at }
+
+// Membros omitidos da apresentação. Os eventos continuam gravados: isto só os
+// esconde de rankings, listas, gráficos e calendário.
+async function omitidos(groupId) {
+  const hit = omitCache.get(groupId)
+  if (hit && Date.now() - hit.at < 60000) return hit.lista
+  const rows = await sql`SELECT sender FROM omitted_members WHERE group_id = ${groupId}`
+  const lista = rows.map(r => r.sender)
+  omitCache.set(groupId, { lista, at: Date.now() })
+  return lista
+}
+
 function isValidTimezone(tz) {
   if (typeof tz !== 'string' || !tz) return false
   try {
@@ -179,11 +192,13 @@ function isValidTimezone(tz) {
 
 async function getRanking(groupId, start, end, limit = 10) {
   const TZ = await groupTz(groupId)
+  const ocultos = await omitidos(groupId)
   const rows = await sql`
     SELECT sender, COUNT(*)::int as count FROM events
     WHERE group_id = ${groupId}
       AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
       AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      AND sender <> ALL(${ocultos})
     GROUP BY sender ORDER BY count DESC
     LIMIT ${limit}
   `
@@ -423,6 +438,12 @@ app.get('/admin/settings', adminAuth, (req, res) => {
   res.set('Cache-Control', 'no-cache')
   res.type('html').send(html)
 })
+app.get('/admin/requests', adminAuth, (req, res) => {
+  let html = fs.readFileSync(path.join(publicDir, 'requests.html'), 'utf-8')
+  html = html.replace(/(href|src)="([^"/:][^"]*\.(css|js))"/g, `$1="/admin/$2?v=${ASSET_VERSION}"`)
+  res.set('Cache-Control', 'no-cache')
+  res.type('html').send(html)
+})
 app.get('/admin/group/:uuid', adminAuth, serveGroupPage('/admin'))
 app.get('/admin/group/:uuid/:page', adminAuth, serveGroupPage('/admin'))
 app.use('/admin', adminAuth, (req, res, next) => {
@@ -462,7 +483,7 @@ app.get('/group/:uuid', serveGroupPage(''))
 app.get('/group/:uuid/:page', serveGroupPage(''))
 
 // --- protect direct access ---
-const PROTECTED_PAGES = ['/list.html', '/charts.html', '/calendar.html', '/presence.html', '/settings.html', '/groups.html']
+const PROTECTED_PAGES = ['/list.html', '/charts.html', '/calendar.html', '/presence.html', '/settings.html', '/groups.html', '/requests.html']
 app.use((req, res, next) => {
   if (PROTECTED_PAGES.includes(req.path)) return res.redirect('/')
   next()
@@ -588,6 +609,102 @@ app.put('/api/config/groups/:id/milestones', adminApiAuth, async (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     log.error({ err }, 'Erro PUT milestones')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// membros do grupo, com o estado de omissão
+app.get('/api/config/groups/:id/members', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const rows = await sql`
+      SELECT e.sender,
+             COALESCE(c.name, e.sender) as name,
+             COUNT(*)::int as total,
+             (o.sender IS NOT NULL) as omitted
+      FROM events e
+      LEFT JOIN contacts c ON c.jid = e.sender
+      LEFT JOIN omitted_members o ON o.group_id = e.group_id AND o.sender = e.sender
+      WHERE e.group_id = ${groupId} AND e.sender <> ${groupId}
+      GROUP BY e.sender, c.name, o.sender
+      ORDER BY total DESC
+    `
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro GET members')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.put('/api/config/groups/:id/members/:sender/omit', adminApiAuth, async (req, res) => {
+  try {
+    const groupId = req.params.id
+    const sender = req.params.sender
+    const { omitted } = req.body
+    if (typeof omitted !== 'boolean') return res.status(400).json({ error: 'omitted must be boolean' })
+
+    if (omitted) {
+      await sql`INSERT INTO omitted_members (group_id, sender) VALUES (${groupId}, ${sender}) ON CONFLICT DO NOTHING`
+    } else {
+      await sql`DELETE FROM omitted_members WHERE group_id = ${groupId} AND sender = ${sender}`
+    }
+    omitCache.delete(groupId)
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT omit')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// --- pedidos de melhoria (!request) ---
+
+const REQUEST_STATUS = ['pendente', 'aprovado', 'recusado']
+// datas vêm do <input type=date>: AAAA-MM-DD, ou vazio para limpar
+const dataOuNull = (v) => (v === null || v === '' || v === undefined ? null : /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined)
+
+app.get('/api/config/requests', adminApiAuth, async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT r.request_id, r.group_id, r.sender, r.texto, r.status, r.created_at, r.updated_at,
+             to_char(r.inicio_implementacao, 'YYYY-MM-DD') as inicio_implementacao,
+             to_char(r.deploy_estimado, 'YYYY-MM-DD') as deploy_estimado,
+             COALESCE(g.name, r.group_id) as group_name,
+             COALESCE(c.name, r.sender) as sender_name
+      FROM requests r
+      LEFT JOIN contacts g ON g.jid = r.group_id
+      LEFT JOIN contacts c ON c.jid = r.sender
+      ORDER BY r.created_at DESC
+    `
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro GET requests')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+app.put('/api/config/requests/:id', adminApiAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' })
+    const { status } = req.body
+    const inicio = dataOuNull(req.body.inicio_implementacao)
+    const deploy = dataOuNull(req.body.deploy_estimado)
+    if (!REQUEST_STATUS.includes(status)) return res.status(400).json({ error: 'invalid status' })
+    if (inicio === undefined || deploy === undefined) return res.status(400).json({ error: 'invalid date' })
+
+    const rows = await sql`
+      UPDATE requests
+      SET status = ${status},
+          inicio_implementacao = ${inicio}::date,
+          deploy_estimado = ${deploy}::date,
+          updated_at = NOW()
+      WHERE request_id = ${id}
+      RETURNING request_id
+    `
+    if (rows.length === 0) return res.status(404).json({ error: 'not found' })
+    res.json({ ok: true })
+  } catch (err) {
+    log.error({ err }, 'Erro PUT request')
     res.status(500).json({ error: 'internal error' })
   }
 })
@@ -763,6 +880,20 @@ app.get('/api/config/contacts', adminApiAuth, async (req, res) => {
   }
 })
 
+// QR de emparelhamento, quando a sessão expira. Só admin: quem tiver este
+// código liga-se à conta de WhatsApp do bot.
+app.get('/api/config/qr', adminApiAuth, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store')
+    const [row] = await sql`SELECT value, updated_at FROM bot_metrics WHERE key = 'wa_qr'`
+    if (!row) return res.json(null)
+    res.json({ qr: row.value, updated_at: row.updated_at })
+  } catch (err) {
+    log.error({ err }, 'Erro /api/config/qr')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
 app.get('/api/config/metrics', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store')
@@ -829,6 +960,8 @@ statsRouter.get('/user-daily', async (req, res) => {
 
     const sender = req.query.sender
     if (!sender) return res.status(400).json({ error: 'sender required' })
+    // omitido não é inspecionável, nem por URL direto
+    if ((await omitidos(groupId)).includes(sender)) return res.json([])
 
     const start = req.query.start || null
     const end = req.query.end || null
@@ -867,6 +1000,7 @@ statsRouter.get('/top-users-daily', async (req, res) => {
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
         AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        AND sender <> ALL(${await omitidos(groupId)})
       GROUP BY sender ORDER BY total DESC LIMIT 5
     `
 
@@ -907,7 +1041,12 @@ statsRouter.get('/by-weekday', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     let rows
     if (senders) {
@@ -941,7 +1080,12 @@ statsRouter.get('/by-period', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     let rows
     if (senders) {
@@ -982,6 +1126,7 @@ statsRouter.get('/users-weekday', async (req, res) => {
       SELECT sender, COUNT(*)::int as total FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        AND sender <> ALL(${await omitidos(groupId)})
       GROUP BY sender ORDER BY total DESC LIMIT 5
     `
 
@@ -1014,7 +1159,12 @@ statsRouter.get('/trend', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     let rows
     if (senders) {
@@ -1048,7 +1198,12 @@ statsRouter.get('/period-weekday', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     let rows
     if (senders) {
@@ -1092,6 +1247,7 @@ statsRouter.get('/daily-winners', async (req, res) => {
       FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        AND sender <> ALL(${await omitidos(groupId)})
       GROUP BY 1, 2, 3 ORDER BY date, total DESC
     `
 
@@ -1125,7 +1281,12 @@ statsRouter.get('/hourly', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     let rows
     if (senders) {
@@ -1175,7 +1336,12 @@ statsRouter.get('/presence', async (req, res) => {
     const TZ = await groupTz(groupId)
     const start = req.query.start || null
     const end = req.query.end || null
-    const senders = req.query.senders ? req.query.senders.split(',') : null
+    // o filtro de pessoas vem da UI, mas pode ser forjado por URL: os omitidos
+    // não podem ser isolados nem através dos agregados
+    const ocultos = await omitidos(groupId)
+    const senders = req.query.senders
+      ? req.query.senders.split(',').filter((x) => !ocultos.includes(x))
+      : null
 
     // date_trunc em vez de time_bucket: os baldes já vêm alinhados aos 5 min,
     // e `presence` não é hypertable
@@ -1223,6 +1389,7 @@ statsRouter.get('/presence-heatmap', async (req, res) => {
     // sem `sender` devolve o agregado do grupo, com o número de pessoas
     // distintas presentes em cada célula
     const sender = req.query.sender || null
+    if (sender && (await omitidos(groupId)).includes(sender)) return res.json([])
     const start = req.query.start || null
     const end = req.query.end || null
 
@@ -1264,6 +1431,196 @@ statsRouter.get('/presence-heatmap', async (req, res) => {
   }
 })
 
+// Pessoas com presença OU atividade no período. O dropdown da página de
+// presença não pode sair só do ranking: quem apenas observa não escreve nada,
+// não entra em `events`, e ficaria de fora precisamente na página feita para
+// o encontrar.
+statsRouter.get('/presence-members', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    const rows = await sql`
+      SELECT sender,
+             SUM(acoes)::int as acoes,
+             SUM(baldes)::int as baldes
+      FROM (
+        SELECT sender, COUNT(*)::int as acoes, 0 as baldes
+        FROM events
+        WHERE group_id = ${groupId}
+          AND sender <> ALL(${await omitidos(groupId)})
+          AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND created_at <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY sender
+        UNION ALL
+        SELECT sender, 0 as acoes, COUNT(*)::int as baldes
+        FROM presence
+        WHERE group_id = ${groupId}
+          AND sender <> ${groupId}
+          AND sender <> ALL(${await omitidos(groupId)})
+          AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+          AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        GROUP BY sender
+      ) t
+      GROUP BY sender
+      ORDER BY 2 DESC, 3 DESC
+    `
+
+    const nameMap = await getNames(rows.map(r => r.sender))
+    res.json(rows.map(r => ({ sender: r.sender, name: nameMap.get(r.sender), acoes: r.acoes, baldes: r.baldes })))
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/presence-members')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// Repartição da atividade de uma pessoa por tipo. A média é aberta pelo
+// subtipo (sticker, foto, áudio…) quando ele existe — o histórico anterior à
+// coluna `media_kind` fica agrupado em "média".
+statsRouter.get('/user-types', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    const sender = req.query.sender
+    if (!sender) return res.status(400).json({ error: 'sender required' })
+    if ((await omitidos(groupId)).includes(sender)) return res.json([])
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    const rows = await sql`
+      SELECT CASE
+               WHEN activity_type = 'REACTION' THEN 'reaction'
+               WHEN activity_type = 'MEDIA_MESSAGE' THEN COALESCE(media_kind, 'media')
+               ELSE 'text'
+             END as tipo,
+             COUNT(*)::int as total
+      FROM events
+      WHERE group_id = ${groupId} AND sender = ${sender}
+        AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ})
+        AND created_at <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY 1 ORDER BY 2 DESC
+    `
+
+    res.json(rows)
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/user-types')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// Quem mais observa sem participar: baldes de presença sem qualquer ação.
+statsRouter.get('/observers', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const TZ = await groupTz(groupId)
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    const rows = await sql`
+      SELECT sender,
+             COUNT(*) FILTER (WHERE actions = 0)::int as observou,
+             COUNT(*)::int as baldes,
+             SUM(actions)::int as acoes
+      FROM presence
+      WHERE group_id = ${groupId}
+        AND sender <> ${groupId}
+        AND sender <> ALL(${await omitidos(groupId)})
+        AND bucket >= (${start}::timestamp AT TIME ZONE ${TZ})
+        AND bucket <  ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+      GROUP BY sender
+      HAVING COUNT(*) FILTER (WHERE actions = 0) > 0
+      ORDER BY observou DESC
+      LIMIT 10
+    `
+
+    const nameMap = await getNames(rows.map(r => r.sender))
+    res.json(rows.map(r => ({
+      sender: r.sender,
+      name: nameMap.get(r.sender),
+      observou: r.observou,          // baldes de 5 min só a ver
+      minutos: r.observou * 5,
+      acoes: r.acoes,
+    })))
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/observers')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// --- prémios semanais (BISOU / HAT TRICK / POKER) ---
+
+// Pesos iguais aos do bot (WEEKLY em bot/milestone.js): uma janela de ranking
+// liderada, um ponto.
+const PONTOS_PREMIO = { POKER: 4, HAT_TRICK: 3, BISOU: 2 }
+const pontosDe = (tipo) => PONTOS_PREMIO[tipo] || 0
+
+// ranking por pontos no período
+statsRouter.get('/awards', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    const rows = await sql`
+      SELECT sender, type, COUNT(*)::int as total
+      FROM milestone_awards
+      WHERE group_id = ${groupId} AND category = 'WEEKLY'
+        AND run_day >= ${start}::date AND run_day <= ${end}::date
+        AND sender <> ALL(${await omitidos(groupId)})
+      GROUP BY sender, type
+    `
+
+    const porPessoa = new Map()
+    for (const r of rows) {
+      const p = porPessoa.get(r.sender) || { sender: r.sender, pontos: 0, premios: 0, tipos: {} }
+      p.pontos += pontosDe(r.type) * r.total
+      p.premios += r.total
+      p.tipos[r.type] = r.total
+      porPessoa.set(r.sender, p)
+    }
+
+    const lista = [...porPessoa.values()].sort((a, b) => b.pontos - a.pontos)
+    const nameMap = await getNames(lista.map(p => p.sender))
+    res.json(lista.map(p => ({ ...p, name: nameMap.get(p.sender) })))
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/awards')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// os prémios de uma pessoa, semana a semana
+statsRouter.get('/awards-detail', async (req, res) => {
+  try {
+    const groupId = await resolveGroup(req, res)
+    if (!groupId) return res.status(400).json({ error: 'group required' })
+    const sender = req.query.sender
+    if (!sender) return res.status(400).json({ error: 'sender required' })
+    const start = req.query.start || null
+    const end = req.query.end || null
+
+    // a semana ganha é a que fecha no sábado anterior ao apuramento de domingo
+    const rows = await sql`
+      SELECT type, to_char(run_day, 'YYYY-MM-DD') as run_day, params,
+             to_char(run_day - 7, 'DD/MM') as semana_inicio,
+             to_char(run_day - 1, 'DD/MM/YYYY') as semana_fim
+      FROM milestone_awards
+      WHERE group_id = ${groupId} AND category = 'WEEKLY' AND sender = ${sender}
+        AND run_day >= ${start}::date AND run_day <= ${end}::date
+      ORDER BY run_day DESC
+    `
+    res.json(rows.map(r => ({ ...r, pontos: pontosDe(r.type) })))
+  } catch (err) {
+    log.error({ err }, 'Erro /api/stats/awards-detail')
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
 statsRouter.get('/race', async (req, res) => {
   try {
     const groupId = await resolveGroup(req, res)
@@ -1278,6 +1635,7 @@ statsRouter.get('/race', async (req, res) => {
       SELECT sender, COUNT(*)::int as total FROM events
       WHERE group_id = ${groupId}
         AND created_at >= (${start}::timestamp AT TIME ZONE ${TZ}) AND created_at < ((${end}::date + 1)::timestamp AT TIME ZONE ${TZ})
+        AND sender <> ALL(${await omitidos(groupId)})
       GROUP BY sender ORDER BY total DESC LIMIT ${limit}
     `
     const senderIds = topSenders.map(s => s.sender)

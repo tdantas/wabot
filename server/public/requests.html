@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/images/icon-180.png">
+  <title>WABot — Requests</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --green: #4ade80;
+      --green-soft: rgba(74,222,128,0.12);
+      --red: #ef4444;
+      --red-soft: rgba(239,68,68,0.12);
+    }
+
+    .container { max-width: 760px; padding: 60px 24px 80px; }
+
+    .bg-glow--1 { top: -150px; left: -80px; background: #4a2d7a; opacity: 0.1; }
+    .bg-glow--2 { bottom: -100px; right: -120px; background: var(--accent); opacity: 0.06; }
+
+    /* --- header --- */
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-bottom: 18px; padding: 6px 12px; border-radius: 6px;
+      font-size: 0.75rem; font-weight: 500; color: var(--text-muted);
+      text-decoration: none; border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .back-link:hover { border-color: var(--border-accent); color: var(--accent); }
+    .back-link svg { width: 14px; height: 14px; }
+
+    .page-title {
+      font-family: var(--font-display); font-weight: 800;
+      font-size: clamp(1.8rem, 5vw, 2.4rem); letter-spacing: -1.5px;
+      line-height: 1.1; margin-bottom: 6px;
+    }
+    .page-subtitle { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 24px; }
+
+    /* --- filtros --- */
+    .filtros { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .filtro {
+      font-family: var(--font-body); font-size: 0.78rem; font-weight: 500;
+      padding: 7px 14px; border-radius: 999px; cursor: pointer;
+      background: var(--surface); color: var(--text-secondary);
+      border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .filtro:hover { border-color: var(--border-accent); }
+    .filtro.ativo { background: var(--accent-soft); color: var(--accent); border-color: var(--border-accent); }
+    .filtro .n { opacity: 0.6; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+    /* --- pedidos --- */
+    .lista { display: flex; flex-direction: column; gap: 12px; }
+    .pedido {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 16px 18px;
+    }
+    .pedido-topo {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+      font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;
+    }
+    .pedido-id { font-family: var(--font-display); font-weight: 700; font-size: 0.95rem; color: var(--text); }
+    .pedido-texto {
+      font-size: 0.9rem; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 14px;
+    }
+
+    .badge {
+      font-size: 0.7rem; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    }
+    .badge.pendente { background: var(--accent-soft); color: var(--accent); }
+    .badge.aprovado { background: var(--green-soft); color: var(--green); }
+    .badge.recusado { background: var(--red-soft); color: var(--red); }
+
+    .controles {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+      padding-top: 12px; border-top: 1px solid var(--border);
+    }
+    .campo { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .campo label { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.3px; }
+    .campo select, .campo input {
+      font-family: var(--font-body); font-size: 0.85rem; width: 100%;
+      background: var(--surface-raised); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    }
+    .campo select option { background: #14151a; color: var(--text); }
+    .campo select:focus, .campo input:focus { outline: none; border-color: var(--border-accent); }
+
+    .vazio { text-align: center; color: var(--text-muted); font-size: 0.88rem; padding: 48px 16px; }
+
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--surface-raised); border: 1px solid var(--border); color: var(--text);
+      font-size: 0.82rem; font-weight: 500; padding: 10px 20px; border-radius: 10px;
+      z-index: 10000; pointer-events: none; opacity: 0; transition: all 0.3s;
+      backdrop-filter: blur(12px);
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    @media (max-width: 560px) {
+      .container { padding: 36px 16px 64px; }
+      .controles { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <div class="container">
+    <a class="back-link" href="/admin/groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>Groups</a>
+    <h1 class="page-title">Requests</h1>
+    <p class="page-subtitle">Pedidos feitos no WhatsApp com <b>!request</b>. As alterações gravam sozinhas e aparecem no <b>!request list</b>.</p>
+
+    <div class="filtros" id="filtros"></div>
+    <div class="lista" id="lista"><div class="vazio">A carregar...</div></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="shared.js"></script>
+  <script>
+    const ESTADOS = [
+      ['pendente', 'Pendente'],
+      ['aprovado', 'Aprovado'],
+      ['recusado', 'Recusado'],
+    ]
+    let pedidos = []
+    let filtro = 'todos'
+
+    function showToast(msg) {
+      const el = document.getElementById('toast')
+      el.textContent = msg
+      el.classList.add('show')
+      clearTimeout(el._t)
+      el._t = setTimeout(() => el.classList.remove('show'), 2000)
+    }
+
+    const quando = (iso) => new Date(iso).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+    function renderFiltros() {
+      const conta = (s) => pedidos.filter((p) => s === 'todos' || p.status === s).length
+      document.getElementById('filtros').innerHTML = [['todos', 'Todos'], ...ESTADOS]
+        .map(([s, rotulo]) => `<button class="filtro${filtro === s ? ' ativo' : ''}" data-f="${s}">${rotulo}<span class="n">${conta(s)}</span></button>`)
+        .join('')
+    }
+
+    function renderLista() {
+      const visiveis = pedidos.filter((p) => filtro === 'todos' || p.status === filtro)
+      const el = document.getElementById('lista')
+      if (visiveis.length === 0) {
+        el.innerHTML = `<div class="vazio">${pedidos.length ? 'Nenhum pedido neste estado.' : 'Ainda não há pedidos.'}</div>`
+        return
+      }
+      el.innerHTML = visiveis.map((p) => `
+        <div class="pedido" data-id="${p.request_id}">
+          <div class="pedido-topo">
+            <span class="pedido-id">#${p.request_id}</span>
+            <span class="badge ${esc(p.status)}">${esc(p.status)}</span>
+            <span>${esc(p.sender_name)} · ${esc(p.group_name)} · ${quando(p.created_at)}</span>
+          </div>
+          <div class="pedido-texto">${esc(p.texto)}</div>
+          <div class="controles">
+            <div class="campo">
+              <label for="st-${p.request_id}">Estado</label>
+              <select id="st-${p.request_id}" data-campo="status">
+                ${ESTADOS.map(([s, r]) => `<option value="${s}"${s === p.status ? ' selected' : ''}>${r}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label for="in-${p.request_id}">Início da implementação</label>
+              <input type="date" id="in-${p.request_id}" data-campo="inicio_implementacao" value="${p.inicio_implementacao || ''}">
+            </div>
+            <div class="campo">
+              <label for="dp-${p.request_id}">Deploy estimado</label>
+              <input type="date" id="dp-${p.request_id}" data-campo="deploy_estimado" value="${p.deploy_estimado || ''}">
+            </div>
+          </div>
+        </div>
+      `).join('')
+    }
+
+    function render() { renderFiltros(); renderLista() }
+
+    // grava o pedido inteiro a cada mudança de um dos três campos
+    async function guardar(id, campo, valor) {
+      const p = pedidos.find((x) => x.request_id === id)
+      if (!p) return
+      const anterior = p[campo]
+      p[campo] = valor || null
+      try {
+        const res = await fetch(`/api/config/requests/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: p.status,
+            inicio_implementacao: p.inicio_implementacao,
+            deploy_estimado: p.deploy_estimado,
+          }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || res.status)
+        showToast(`Pedido #${id} atualizado`)
+        // o estado mexe no badge e nas contagens dos filtros
+        if (campo === 'status') render()
+      } catch (err) {
+        p[campo] = anterior
+        render()
+        showToast(`Erro ao gravar: ${err.message}`)
+      }
+    }
+
+    document.getElementById('filtros').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-f]')
+      if (!b) return
+      filtro = b.dataset.f
+      render()
+    })
+
+    document.getElementById('lista').addEventListener('change', (e) => {
+      const campo = e.target.dataset.campo
+      if (!campo) return
+      const id = Number(e.target.closest('.pedido').dataset.id)
+      guardar(id, campo, e.target.value)
+    })
+
+    async function load() {
+      try {
+        const res = await fetch('/api/config/requests')
+        if (!res.ok) throw new Error(res.status)
+        pedidos = await res.json()
+        render()
+      } catch (err) {
+        document.getElementById('lista').innerHTML = `<div class="vazio">Não foi possível carregar os pedidos (${esc(String(err.message))}).</div>`
+      }
+    }
+
+    load()
+  </script>
+</body>
+</html>

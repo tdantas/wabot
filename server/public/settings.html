@@ -9,7 +9,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/images/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/images/icon-180.png">
-  <title>WABot — Definições</title>
+  <title>WABot — Settings</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -39,6 +39,15 @@
     }
 
     /* --- header --- */
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-bottom: 18px; padding: 6px 12px; border-radius: 6px;
+      font-size: 0.75rem; font-weight: 500; color: var(--text-muted);
+      text-decoration: none; border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .back-link:hover { border-color: rgba(232,168,50,0.2); color: var(--accent); }
+    .back-link svg { width: 14px; height: 14px; }
+
     .page-title {
       font-family: var(--font-display);
       font-weight: 800;
@@ -170,7 +179,18 @@
       color-scheme: dark;
     }
     .tz-select option { background: #14151a; color: var(--text); }
+
     .tz-select:focus { outline: none; border-color: var(--border-accent); }
+
+    .membros-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+    .membro-row {
+      display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px;
+    }
+    .membro-row:nth-child(odd) { background: rgba(255,255,255,0.02); }
+    .membro-row.omitido .membro-nome { color: var(--text-muted); text-decoration: line-through; }
+    .membro-nome { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .membro-total { font-size: 0.72rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
     .group-expand {
       color: var(--text-muted);
@@ -255,6 +275,16 @@
     .metric-card.warn .metric-value { color: var(--accent); }
     .metric-card.bad .metric-value { color: var(--red); }
     .metric-card.neutral .metric-value { color: var(--text); }
+
+    .qr-box {
+      display: none; margin-top: 16px; padding: 16px;
+      background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 12px; text-align: center;
+    }
+    .qr-box.show { display: block; }
+    .qr-box img { width: 260px; max-width: 100%; border-radius: 10px; background: #fff; padding: 8px; }
+    .qr-box p { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px; }
+    .qr-box small { display: block; font-size: 0.72rem; color: var(--text-muted); margin-top: 10px; }
 
     .metrics-offline {
       font-size: 0.82rem;
@@ -359,13 +389,20 @@
   <div class="container">
 
     <div class="page-header">
-      <h1 class="page-title">Definições</h1>
+      <a class="back-link" id="backToGroups" href="/admin/groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>Groups</a>
+      <h1 class="page-title">Settings</h1>
       <p class="page-subtitle">Configurar grupos, comandos e troll mode</p>
     </div>
 
     <div class="metrics-panel" id="metrics">
       <div class="metrics-title">Bot Status</div>
       <div class="metrics-offline">A carregar...</div>
+    </div>
+    <div class="qr-box" id="qrBox">
+      <p><b>Sessão do WhatsApp expirada.</b><br>
+      Abre o WhatsApp no telemóvel → Aparelhos ligados → Ligar aparelho, e lê este código.</p>
+      <img id="qrImg" alt="QR Code">
+      <small id="qrIdade"></small>
     </div>
 
     <div class="search-bar">
@@ -399,6 +436,8 @@
     if (singleGroupMode) {
       document.getElementById('searchInput')?.parentElement?.remove()
       document.getElementById('metrics')?.remove()
+      // dentro de um grupo a barra de baixo já tem o "Grupos"
+      document.getElementById('backToGroups')?.remove()
       const header = document.querySelector('.page-header')
       if (header) {
         header.querySelector('.page-title').textContent = 'Definições do grupo'
@@ -423,9 +462,38 @@
     }
 
     function lagLevel(ms) { return ms < 50 ? 'ok' : ms < 200 ? 'warn' : 'bad' }
+
+    // O processo pode estar vivo e a sessão do WhatsApp morta — foi o que
+    // aconteceu no logout: métricas verdes, bot surdo. Este cartão é o aviso.
+    function estadoWa(wa) {
+      if (!wa) return { classe: 'neutral', valor: '—', rotulo: 'WhatsApp' }
+      if (wa.loggedOut) return { classe: 'bad', valor: 'QR', rotulo: 'Sessão expirada — ler QR' }
+      if (wa.connection === 'open') return { classe: 'ok', valor: 'ligado', rotulo: 'WhatsApp' }
+      return { classe: 'warn', valor: wa.connection || '?', rotulo: `WhatsApp${wa.statusCode ? ' — ' + wa.statusCode : ''}` }
+    }
     function heapLevel(used, total) {
       const pct = parseFloat(used) / parseFloat(total)
       return pct < 0.7 ? 'ok' : pct < 0.9 ? 'warn' : 'bad'
+    }
+
+    // O QR muda a cada ~20s enquanto ninguém o lê, por isso é relido a cada
+    // passagem das métricas em vez de ser guardado.
+    async function loadQr(precisa) {
+      const box = document.getElementById('qrBox')
+      if (!box) return
+      if (!precisa) { box.classList.remove('show'); return }
+      try {
+        const r = await fetch('/api/config/qr', { cache: 'no-store' })
+        const d = await r.json()
+        if (!d?.qr) { box.classList.remove('show'); return }
+        document.getElementById('qrImg').src = d.qr
+        const seg = Math.round((Date.now() - new Date(d.updated_at)) / 1000)
+        document.getElementById('qrIdade').textContent =
+          seg < 60 ? `gerado há ${seg}s` : `gerado há ${Math.round(seg / 60)} min — pode já ter expirado`
+        box.classList.add('show')
+      } catch (err) {
+        box.classList.remove('show')
+      }
     }
 
     async function loadMetrics() {
@@ -437,9 +505,14 @@
           panel.innerHTML = `<div class="metrics-title">Bot Status</div><div class="metrics-offline">Bot offline — sem dados</div>`
           return
         }
+        loadQr(!!m.wa?.loggedOut)
         panel.innerHTML = `
           <div class="metrics-title">Bot Status</div>
           <div class="metrics-grid">
+            <div class="metric-card ${estadoWa(m.wa).classe}">
+              <div class="metric-value">${estadoWa(m.wa).valor}</div>
+              <div class="metric-label">${estadoWa(m.wa).rotulo}</div>
+            </div>
             <div class="metric-card ${lagLevel(parseFloat(m.eventLoopLag))}">
               <div class="metric-value">${m.eventLoopLag}<span class="metric-unit">ms</span></div>
               <div class="metric-label">Event Loop Lag</div>
@@ -492,7 +565,7 @@
         card.classList.toggle('open', card.dataset.id === openCardId)
       })
       if (openCardId === '__global__') loadGlobalPremiumUsers()
-      else if (openCardId) loadPremiumUsers(openCardId)
+      else if (openCardId) { loadPremiumUsers(openCardId); loadMembros(openCardId) }
     }
 
     async function toggleListening(groupId, checked) {
@@ -566,6 +639,33 @@
       if (allContacts) return allContacts
       allContacts = await api('GET', '/api/config/contacts')
       return allContacts
+    }
+
+    async function loadMembros(groupId) {
+      const alvo = document.getElementById(`membros-${groupId}`)
+      if (!alvo) return
+      try {
+        const membros = await api('GET', `/api/config/groups/${encodeURIComponent(groupId)}/members`)
+        if (!membros.length) { alvo.innerHTML = '<div class="toggle-desc">Ainda não há atividade neste grupo.</div>'; return }
+        alvo.innerHTML = membros.map(m => `
+          <div class="membro-row${m.omitted ? ' omitido' : ''}">
+            <span class="membro-nome" title="${esc(m.name)}">${esc(m.name)}</span>
+            <span class="membro-total">${m.total}</span>
+            <label class="toggle">
+              <input type="checkbox" ${m.omitted ? 'checked' : ''}
+                onchange="toggleOmitido('${groupId}', '${m.sender}', this.checked)">
+              <span class="toggle-track"></span>
+            </label>
+          </div>`).join('')
+      } catch (err) {
+        alvo.innerHTML = '<div class="toggle-desc">Erro ao carregar membros.</div>'
+      }
+    }
+
+    async function toggleOmitido(groupId, sender, omitted) {
+      await api('PUT', `/api/config/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(sender)}/omit`, { omitted })
+      showToast(omitted ? 'Membro omitido da visualização' : 'Membro visível novamente')
+      loadMembros(groupId)
     }
 
     async function loadPremiumUsers(groupId) {
@@ -739,7 +839,7 @@
         allGroups = allGroups.filter(g => g.uuid === groupId)
         if (allGroups.length > 0) {
           openCardId = allGroups[0].id
-          setTimeout(() => loadPremiumUsers(openCardId), 100)
+          setTimeout(() => { loadPremiumUsers(openCardId); loadMembros(openCardId) }, 100)
         }
       }
 
@@ -826,6 +926,27 @@
                   <span class="toggle-track"></span>
                 </label>
               </div>
+              <!-- só visual: sem endpoint nem estado guardado -->
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Análise de Sentimento</div>
+                  <div class="toggle-desc">Para ativar precisa autorização de todos os administradores do grupo</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Net Promoter Score (NPS)</div>
+                  <div class="toggle-desc">Somente com business account</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
               <div class="toggle-row">
                 <div>
                   <div class="toggle-label">Fuso horário</div>
@@ -864,6 +985,14 @@
                   <div class="autocomplete-list" id="premium-ac-${g.id}"></div>
                 </div>
               </div>
+            </div>
+            <div class="setting-section">
+              <div class="setting-section-title">Membros</div>
+              <div class="toggle-desc" style="margin-bottom:10px">
+                Omitir esconde a pessoa dos rankings, listas, gráficos, calendário e mensagens do bot.
+                Os eventos continuam a ser guardados — é reversível a qualquer momento.
+              </div>
+              <div id="membros-${g.id}" class="membros-list">A carregar...</div>
             </div>
             <div class="setting-section">
               <div class="setting-section-title">Comandos</div>

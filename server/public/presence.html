@@ -131,8 +131,28 @@
   <script src="shared.js"></script>
   <script>
     const MAX_DIAS = 30
-    const HORA_INICIO = 5, HORA_FIM = 20
-    const SLOT_INICIO = HORA_INICIO * 4, SLOT_FIM = HORA_FIM * 4
+
+    // A janela horária adapta-se aos dados: um grupo em Lisboa vive à noite e
+    // um em Recife à tarde, e uma janela fixa cortava a atividade de um deles.
+    // Só o mínimo de horas mortas é aparado, com 1h de folga de cada lado.
+    const JANELA_MINIMA = 8
+    let HORA_INICIO = 5, HORA_FIM = 20
+    let SLOT_INICIO = HORA_INICIO * 4, SLOT_FIM = HORA_FIM * 4
+
+    function calcularJanela(dados) {
+      const slots = (dados || []).map(d => d.slot)
+      if (slots.length === 0) return
+      let ini = Math.max(0, Math.floor(Math.min(...slots) / 4) - 1)
+      let fim = Math.min(24, Math.ceil((Math.max(...slots) + 1) / 4) + 1)
+      // garante uma largura mínima, sem sair do dia
+      while (fim - ini < JANELA_MINIMA) {
+        if (fim < 24) fim++
+        else if (ini > 0) ini--
+        else break
+      }
+      HORA_INICIO = ini; HORA_FIM = fim
+      SLOT_INICIO = ini * 4; SLOT_FIM = fim * 4
+    }
 
     if (!groupId) location.href = '/'
 
@@ -220,11 +240,16 @@
     }
 
     async function carregarPessoas() {
-      const r = await fetch(apiUrl('/api/stats', '&limit=200'), FETCH_OPTS)
-      const data = await r.json()
+      // a lista vem da união de presença e atividade — quem só observa não
+      // aparece no ranking, e é quem esta página existe para mostrar
+      const [rNome, rMembros] = await Promise.all([
+        fetch(apiUrl('/api/stats', '&limit=1'), FETCH_OPTS),
+        fetch(apiUrl('/api/stats/presence-members'), FETCH_OPTS),
+      ])
+      const data = await rNome.json()
       document.getElementById('title').textContent = data.name || 'Presença'
       document.title = `WABot — ${data.name || ''} — Presença`
-      pessoas = data.rows || []
+      pessoas = await rMembros.json()
       const sel = document.getElementById('person')
       sel.innerHTML = pessoas.map(p => `<option value="${p.sender}">${esc(p.name)}</option>`).join('')
       if (!pessoas.some(p => p.sender === sender)) sender = pessoas[0]?.sender || null
@@ -255,15 +280,25 @@
         porDia.get(d.dia).set(d.slot, d)
       }
 
-      let html = '<div class="hm-hours"><span></span>' +
-        [HORA_INICIO, 8, 11, 14].map(h => `<span class="hm-hour">${String(h).padStart(2, '0')}h</span>`).join('') +
-        `<span class="hm-hour" style="display:flex;justify-content:space-between"><span>17h</span><span>${HORA_FIM}h</span></span>` +
-        '</div><div class="hm-grid">'
+      const nCols = SLOT_FIM - SLOT_INICIO
+      const colunas = `grid-template-columns: 58px repeat(${nCols}, 1fr)`
+
+      // rótulos de 3 em 3 horas; o último bloco fecha com a hora final
+      let rotulos = ''
+      for (let h = HORA_INICIO; h < HORA_FIM; h += 3) {
+        const span = Math.min(12, (HORA_FIM - h) * 4)
+        const ultimo = h + 3 >= HORA_FIM
+        rotulos += ultimo
+          ? `<span class="hm-hour" style="grid-column:span ${span};display:flex;justify-content:space-between"><span>${String(h).padStart(2, '0')}h</span><span>${String(HORA_FIM).padStart(2, '0')}h</span></span>`
+          : `<span class="hm-hour" style="grid-column:span ${span}">${String(h).padStart(2, '0')}h</span>`
+      }
+
+      let html = `<div class="hm-hours" style="${colunas}"><span></span>${rotulos}</div><div class="hm-grid">`
 
       for (const dia of buildDateRange()) {
         const slots = porDia.get(dia) || new Map()
         const [, m, d] = dia.split('-')
-        html += `<div class="hm-row"><span class="hm-day">${d}/${m}</span>`
+        html += `<div class="hm-row" style="${colunas}"><span class="hm-day">${d}/${m}</span>`
         for (let s = SLOT_INICIO; s < SLOT_FIM; s++) {
           const c = slots.get(s)
           const n = nivel(c?.eventos || 0)
@@ -283,7 +318,8 @@
 
     function legendaFuso() {
       const tz = window.GROUP_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone
-      return { texto: `${HORA_INICIO}h–${HORA_FIM}h · ${diasNoPeriodo(startDate, endDate)} dias · hora de ${tz.split('/').pop().replace(/_/g, ' ')}`, tz }
+      const jan = `${String(HORA_INICIO).padStart(2, '0')}h–${String(HORA_FIM).padStart(2, '0')}h`
+      return { texto: `${jan} · ${diasNoPeriodo(startDate, endDate)} dias · hora de ${tz.split('/').pop().replace(/_/g, ' ')}`, tz }
     }
 
     // --- mapa de presença: cor única, com filtro opcional ---
@@ -323,17 +359,28 @@
     })
 
     // --- mapa do grupo: não depende da pessoa escolhida, só do período ---
-    async function renderHeatmapGrupo() {
-      const wrap = document.getElementById('hmWrapGrupo')
-      let dados
+    let dadosGrupo = null
+
+    // Busca o mapa do grupo e define a janela horária a partir dele: como
+    // agrega toda a gente, é o superconjunto — nenhuma pessoa tem atividade
+    // fora do que o grupo tem.
+    async function carregarGrupo() {
       try {
         const r = await fetch(apiUrl('/api/stats/presence-heatmap'), FETCH_OPTS)
-        dados = await r.json()
+        dadosGrupo = await r.json()
       } catch (err) {
+        dadosGrupo = null
+      }
+      calcularJanela(dadosGrupo)
+    }
+
+    function renderHeatmapGrupo() {
+      const wrap = document.getElementById('hmWrapGrupo')
+      if (!dadosGrupo) {
         wrap.innerHTML = '<div class="hm-empty">Erro ao carregar presença do grupo.</div>'
         return
       }
-      const visiveis = (dados || []).filter(d => d.slot >= SLOT_INICIO && d.slot < SLOT_FIM)
+      const visiveis = dadosGrupo.filter(d => d.slot >= SLOT_INICIO && d.slot < SLOT_FIM)
       if (visiveis.length === 0) {
         wrap.innerHTML = '<div class="hm-empty">Sem presença registada neste período.</div>'
         document.getElementById('totalsGrupo').innerHTML = ''
@@ -433,9 +480,10 @@
     async function carregar() {
       if (!validarPeriodo()) return
       await carregarPessoas()
-      // o mapa do grupo não depende da pessoa escolhida; só é refeito aqui,
-      // quando as datas mudam
-      await Promise.all([renderHeatmap(), renderHeatmapGrupo()])
+      // a janela horária sai dos dados do grupo, por isso vem antes de desenhar
+      await carregarGrupo()
+      renderHeatmapGrupo()
+      await renderHeatmap()
       document.body.classList.add('loaded')
     }
 

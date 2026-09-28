@@ -214,14 +214,19 @@
     let currentYear = parseInt(params.get('year')) || now.getFullYear()
     let currentMonth = params.has('month') ? parseInt(params.get('month')) - 1 : now.getMonth()
 
+    // As fronteiras do mês são datas de calendário, não instantes: construí-las
+    // com `new Date(...)` e converter para o fuso do grupo deslocava-as um dia
+    // (o 1 de agosto às 00:00 de Lisboa é ainda 31 de julho em Recife), e o
+    // último dia do mês ficava de fora do pedido.
     function getMonthRange(year, month) {
-      const first = new Date(year, month, 1)
-      const last = new Date(year, month + 1, 0)
+      const pad = (n) => String(n).padStart(2, '0')
+      const daysInMonth = new Date(year, month + 1, 0).getDate()
       return {
-        start: localDate(first),
-        end: localDate(last),
-        firstDow: first.getDay(),
-        daysInMonth: last.getDate(),
+        start: `${year}-${pad(month + 1)}-01`,
+        end: `${year}-${pad(month + 1)}-${pad(daysInMonth)}`,
+        // getUTCDay sobre uma data UTC: independente do fuso do browser
+        firstDow: new Date(Date.UTC(year, month, 1)).getUTCDay(),
+        daysInMonth,
       }
     }
 

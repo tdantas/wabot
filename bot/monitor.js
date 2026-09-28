@@ -2,6 +2,15 @@ const { sql } = require('./db')
 
 const INTERVAL = parseInt(process.env.MONITOR_INTERVAL, 10) || 5000
 
+// Estado da ligação ao WhatsApp, publicado junto das métricas. Sem isto, uma
+// sessão expirada (logout 401) é invisível: o processo continua vivo e os
+// números de memória continuam a atualizar enquanto o bot está surdo.
+let wa = { connection: 'connecting', since: Date.now(), loggedOut: false }
+
+function setStatus(patch) {
+  wa = { ...wa, ...patch, since: Date.now() }
+}
+
 function start() {
   let lastCheck = process.hrtime.bigint()
 
@@ -20,6 +29,7 @@ function start() {
       external: (mem.external / 1024 / 1024).toFixed(1),
       eventLoopLag: lag.toFixed(1),
       uptime: Math.floor(process.uptime()),
+      wa: { ...wa, sinceSec: Math.floor((Date.now() - wa.since) / 1000) },
     }
 
     try {
@@ -31,4 +41,4 @@ function start() {
   }, INTERVAL).unref()
 }
 
-module.exports = { start }
+module.exports = { start, setStatus }

@@ -8,6 +8,7 @@ const {
   makeCacheableSignalKeyStore,
 } = require('@whiskeysockets/baileys')
 const qrcode = require('qrcode-terminal')
+const QRCode = require('qrcode')
 const pino = require('pino')
 const fs = require('fs')
 const path = require('path')
@@ -60,23 +61,82 @@ function loadConfig() {
   return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
 }
 
+const AUTH_DIR = process.env.AUTH_DIR || 'auth_info'
+
 // socket em uso; trocado a cada reconexão
 let activeSock = null
+
+// Depois de um logout (401) as credenciais guardadas não servem para nada: com
+// elas presentes a Baileys volta a falhar em vez de emitir um QR novo, e o bot
+// fica em silêncio à espera de intervenção manual. Limpar e reiniciar é o que
+// faz aparecer o QR — no log e na UI.
+function limparCredenciais() {
+  try {
+    for (const f of fs.readdirSync(AUTH_DIR)) {
+      fs.rmSync(path.join(AUTH_DIR, f), { recursive: true, force: true })
+    }
+    return true
+  } catch (err) {
+    log.error({ err, AUTH_DIR }, 'Falha ao limpar credenciais')
+    return false
+  }
+}
+
+// --- rajadas de stickers ---
+// Uma sequência de figurinhas em segundos não é conversa: inflaciona o ranking
+// e o heatmap sem representar participação. Numa janela de 15s contam-se no
+// máximo 4; quem mandar menos, conta o que mandou.
+// O subtipo só é conhecido aqui — na base tudo vira MEDIA_MESSAGE.
+const STICKER_JANELA_MS = parseInt(process.env.STICKER_JANELA_MS || '15000', 10)
+const STICKER_MAX = parseInt(process.env.STICKER_MAX || '4', 10)
+const janelaSticker = new Map() // `grupo:pessoa` → { inicio, contados }
+
+function stickerEmRajada(groupId, sender, at) {
+  const chave = `${groupId}:${sender}`
+  const janela = janelaSticker.get(chave)
+
+  // fora da janela (ou primeira figurinha): abre uma nova
+  if (!janela || at - janela.inicio >= STICKER_JANELA_MS) {
+    janelaSticker.set(chave, { inicio: at, contados: 1 })
+    return false
+  }
+  if (janela.contados < STICKER_MAX) {
+    janela.contados++
+    return false
+  }
+  return true // teto atingido nesta janela
+}
+
+// Quanto do histórico entregue pelo WhatsApp é aproveitado. Recuperar o
+// intervalo em que o bot esteve fora é o objetivo; reescrever meses de
+// conversa antiga não é.
+const HISTORY_MAX_DIAS = parseInt(process.env.HISTORY_MAX_DIAS || '14', 10)
 
 // O sinal de presença (online / a escrever) só chega para grupos subscritos, e
 // a subscrição não é eterna. Repetimos periodicamente, o que também apanha os
 // grupos ativados na UI depois do arranque.
 const PRESENCE_SUBSCRIBE_MS = parseInt(process.env.PRESENCE_SUBSCRIBE_MS || String(10 * 60 * 1000), 10)
 
-// A conta do bot é também a conta de uma pessoa real. As ações dela (escrever,
-// reagir, editar) são presença legítima; já o "online" pode vir do processo do
-// bot e não da pessoa, por isso essa origem é ignorada para a própria conta.
-function isBotJid(jid) {
-  if (!jid || !activeSock?.user) return false
-  const norm = (j) => String(j || '').replace(/:\d+@/, '@')
-  const eu = [activeSock.user.id, activeSock.user.lid].filter(Boolean).map(norm)
-  const alvo = norm(jid)
-  return eu.includes(alvo) || eu.includes(norm(contacts.toLid(jid)))
+// Relê nomes de grupos e participantes. Sem isto, uma pessoa que muda o nome
+// no WhatsApp continua a aparecer com o antigo até voltar a escrever, porque
+// o `pushName` só chega nas mensagens dela.
+const CONTACTS_SYNC_MS = parseInt(process.env.CONTACTS_SYNC_MS || String(6 * 60 * 60 * 1000), 10)
+
+async function syncContacts({ ensure = false } = {}) {
+  if (!activeSock) return
+  let pessoas = 0
+  const groups = await activeSock.groupFetchAllParticipating()
+  for (const g of Object.values(groups)) {
+    await contacts.set(g.id, g.subject)
+    if (ensure) await settings.ensureGroup(g.id)
+    for (const p of g.participants) {
+      if (p.notify) {
+        await contacts.set(p.id, p.notify)
+        pessoas++
+      }
+    }
+  }
+  log.info({ grupos: Object.keys(groups).length, pessoas }, 'Nomes sincronizados')
 }
 
 async function subscribePresence() {
@@ -95,7 +155,6 @@ async function subscribePresence() {
 }
 
 async function start() {
-  const AUTH_DIR = process.env.AUTH_DIR || 'auth_info'
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
   const { version } = await fetchLatestBaileysVersion()
 
@@ -108,7 +167,10 @@ async function start() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
     },
-    shouldSyncHistoryMessage: () => false,
+    // O WhatsApp entrega o histórico recente no emparelhamento e depois de
+    // períodos offline. Recusá-lo era o motivo de as mensagens do intervalo se
+    // perderem. Aceitamos, e filtramos por data ao processar.
+    shouldSyncHistoryMessage: () => true,
     syncFullHistory: false,
     // A conta que corre o bot ficaria "online" 24h por dia, o que falsearia a
     // presença (e faria o WhatsApp deixar de notificar o telemóvel).
@@ -121,31 +183,56 @@ async function start() {
   msgstore.track(sock)
   activeSock = sock
 
-  sock.ev.process(async (events) => {
+  // Um erro num ramo não pode derrubar o processo: sem este catch a promise
+  // rejeitada chega ao Node como unhandled rejection e o bot sai.
+  sock.ev.process((events) => (async () => {
     if (events['connection.update']) {
       const { connection, lastDisconnect, qr } = events['connection.update']
 
       if (qr) {
+        monitor.setStatus({ connection: 'qr', loggedOut: true })
         log.info('Escaneie o QR Code com WhatsApp (Aparelhos Conectados):')
         qrcode.generate(qr, { small: true })
+
+        // publica o mesmo QR para a UI: ter de ir ao terminal do servidor para
+        // recuperar a sessão é o pior momento para depender de acesso SSH
+        try {
+          const png = await QRCode.toDataURL(qr, { margin: 1, width: 320 })
+          await sql`
+            INSERT INTO bot_metrics (key, value, updated_at) VALUES ('wa_qr', ${png}, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+          `
+        } catch (err) {
+          log.error({ err }, 'Falha ao publicar QR')
+        }
       }
 
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error)?.output?.statusCode
         const loggedOut = statusCode === DisconnectReason.loggedOut
 
+        monitor.setStatus({ connection: 'close', statusCode, loggedOut })
         log.warn(`Conexão fechada (status ${statusCode})`)
 
         if (!loggedOut) {
           log.info('Reconectando...')
           start()
         } else {
-          log.error('Deslogado. Apague a pasta auth_info/ e rode novamente.')
+          log.error('Sessão terminada pelo WhatsApp. A limpar credenciais e a pedir novo QR...')
+          if (limparCredenciais()) {
+            // o arranque seguinte não encontra credenciais e emite o QR
+            setTimeout(() => start().catch(err => log.error({ err }, 'Falha ao reiniciar após logout')), 3000)
+          } else {
+            log.error(`Não foi possível limpar ${AUTH_DIR}. Apaga o conteúdo à mão e reinicia.`)
+          }
         }
       }
 
       if (connection === 'open') {
+        monitor.setStatus({ connection: 'open', statusCode: null, loggedOut: false })
         log.info('Conectado ao WhatsApp!')
+        // sessão estabelecida: o QR publicado deixa de servir
+        try { await sql`DELETE FROM bot_metrics WHERE key = 'wa_qr'` } catch (_) {}
 
         // seed DB from config.json on first run
         const config = loadConfig()
@@ -157,14 +244,7 @@ async function start() {
         await settings.syncCommands(commands.getCommandList())
 
         // sync all groups and their participants
-        const groups = await sock.groupFetchAllParticipating()
-        for (const g of Object.values(groups)) {
-          await contacts.set(g.id, g.subject)
-          await settings.ensureGroup(g.id)
-          for (const p of g.participants) {
-            if (p.notify) await contacts.set(p.id, p.notify)
-          }
-        }
+        await syncContacts({ ensure: true })
 
         const listening = await settings.getListeningGroupIds()
         if (listening.length === 0) {
@@ -182,6 +262,54 @@ async function start() {
 
     if (events['creds.update']) {
       await saveCreds()
+    }
+
+    // Histórico entregue pelo WhatsApp: recupera o que aconteceu enquanto o bot
+    // esteve fora. O `stats.track` é idempotente pelo message_id, por isso o
+    // que já conhecemos não duplica.
+    if (events['messaging-history.set']) {
+      const { messages = [] } = events['messaging-history.set']
+      const monitoredGroups = new Set(await settings.getListeningGroupIds())
+      const limite = Date.now() - HISTORY_MAX_DIAS * 24 * 60 * 60 * 1000
+      let recuperadas = 0
+
+      for (const msg of messages) {
+        const from = msg.key?.remoteJid
+        if (!from || !monitoredGroups.has(from)) continue
+        if (msg.key.fromMe && !msg.key.participant) continue
+
+        const ts = Number(msg.messageTimestamp) * 1000
+        if (!ts || ts < limite) continue
+
+        const autor = contacts.toLid(msg.key.participant || from)
+        if (!autor || autor === from) continue
+
+        const kind =
+          msg.message?.stickerMessage ? 'sticker'
+          : msg.message?.imageMessage ? 'image'
+          : msg.message?.videoMessage ? 'video'
+          : msg.message?.audioMessage ? 'audio'
+          : msg.message?.documentMessage ? 'document'
+          : null
+        const temTexto = !!(msg.message?.conversation || msg.message?.extendedTextMessage?.text)
+        if (!kind && !temTexto) continue
+
+        try {
+          await stats.track(from, autor, kind ? ACTIVITY_TYPES.MEDIA_MESSAGE : ACTIVITY_TYPES.TEXT_MESSAGE,
+            msg.key.id, msg.messageTimestamp, kind)
+          // Sem presença aqui: o `presence.seen` soma no balde e o histórico
+          // traz mensagens que já conhecemos, o que inflacionaria as ações.
+          // A presença destes dias reconstrói-se com `backfill-presence.js`,
+          // que usa GREATEST e nunca duplica.
+          recuperadas++
+        } catch (err) {
+          log.debug({ err, id: msg.key.id }, 'falha ao recuperar mensagem do histórico')
+        }
+      }
+
+      if (recuperadas > 0) {
+        log.info({ recuperadas, recebidas: messages.length, dias: HISTORY_MAX_DIAS }, 'Histórico recuperado')
+      }
     }
 
     // capture JID→LID mappings from contacts updates
@@ -206,8 +334,16 @@ async function start() {
       for (const event of gpUpdates) {
         if (event.action !== 'add') continue
 
-        const botJid = sock.user?.id?.replace(/:\d+@/, '@')
-        const wasAdded = event.participants.some(p => p.replace(/:\d+@/, '@') === botJid)
+        // Na Baileys 7 cada participante é { id, phoneNumber, admin } — o `id`
+        // pode ser o LID e o número vir à parte; versões antigas mandavam só
+        // a string do jid. O bot pode aparecer por qualquer das duas formas.
+        const semDevice = (jid) => (typeof jid === 'string' ? jid.replace(/:\d+@/, '@') : null)
+        const botJids = new Set([semDevice(sock.user?.id), semDevice(sock.user?.lid)].filter(Boolean))
+        const wasAdded = (event.participants || []).some((p) => (
+          typeof p === 'string'
+            ? botJids.has(semDevice(p))
+            : botJids.has(semDevice(p?.id)) || botJids.has(semDevice(p?.phoneNumber))
+        ))
         if (!wasAdded) continue
 
         const groupId = event.id
@@ -249,8 +385,9 @@ async function start() {
         const from = key.remoteJid
         if (!monitoredGroups.has(from)) continue
 
-        const sender = contacts.toLid(reaction.key?.participant || reaction.key?.remoteJid)
-        if (!sender) continue
+        // sem `participant` não sabemos quem reagiu; o `remoteJid` seria o grupo
+        const sender = contacts.toLid(reaction.key?.participant)
+        if (!sender || sender === from) continue
 
         if (!reaction.text) continue
 
@@ -272,8 +409,12 @@ async function start() {
         const from = key?.remoteJid
         if (!from || !monitoredGroups.has(from)) continue
 
-        // edições feitas pelo próprio bot (barra de loading) não são atividade
-        if (key.fromMe && !key.participant) continue
+        // Qualquer atualização de mensagem nossa é ignorada. A barra de loading
+        // edita a mensagem do bot uma vez por segundo, e o `!key.participant`
+        // não chega para a apanhar: nas edições em grupo a chave costuma trazer
+        // o participante preenchido. O preço é perder as edições que a pessoa
+        // faça do telemóvel na mesma conta — raras, ao lado do ruído do bot.
+        if (key.fromMe) continue
 
         const autor = contacts.toLid(update?.key?.participant || key.participant)
         if (!autor) continue
@@ -285,7 +426,11 @@ async function start() {
       }
     }
 
-    // presença do WhatsApp: online, a escrever, a gravar áudio
+    // Presença do WhatsApp: online, a escrever, a gravar áudio.
+    // A conta que corre o bot não é excluída: com `markOnlineOnConnect: false`
+    // o processo não anuncia presença, por isso um "online" desta conta vem
+    // mesmo do telemóvel da pessoa. (Se algum dia essa opção voltar a `true`,
+    // esta conta passa a aparecer online 24h e o filtro tem de voltar.)
     if (events['presence.update']) {
       const monitoredGroups = new Set(await settings.getListeningGroupIds())
       const { id, presences } = events['presence.update']
@@ -296,7 +441,6 @@ async function start() {
           if (!['available', 'composing', 'recording'].includes(info?.lastKnownPresence)) continue
           const quem = contacts.toLid(participante)
           if (!quem) continue
-          if (isBotJid(participante)) continue // o bot está sempre ligado
           presence.seen(id, quem, new Date(), 'online')
         }
       }
@@ -340,11 +484,15 @@ async function start() {
           || msg.message?.extendedTextMessage?.text
           || ''
 
-        const hasMedia = !!(msg.message?.imageMessage
-          || msg.message?.videoMessage
-          || msg.message?.audioMessage
-          || msg.message?.stickerMessage
-          || msg.message?.documentMessage)
+        // o subtipo só existe aqui: na base tudo vira MEDIA_MESSAGE
+        const mediaKind =
+          msg.message?.stickerMessage ? 'sticker'
+          : msg.message?.imageMessage ? 'image'
+          : msg.message?.videoMessage ? 'video'
+          : msg.message?.audioMessage ? 'audio'
+          : msg.message?.documentMessage ? 'document'
+          : null
+        const hasMedia = mediaKind !== null
 
         const location = msg.message?.locationMessage
 
@@ -396,7 +544,15 @@ async function start() {
         // mensagens que o próprio bot envia (emitOwnEvents), e cada frame da
         // barra de loading é um envio. Marcar presença antes deste filtro
         // enchia o mapa da conta que corre o bot.
-        presence.seen(from, sender, msg.messageTimestamp ? new Date(Number(msg.messageTimestamp) * 1000) : new Date(), 'escrita')
+        const quando = msg.messageTimestamp ? new Date(Number(msg.messageTimestamp) * 1000) : new Date()
+
+        // figurinha em rajada: conta a primeira, ignora as seguintes
+        const rajada = mediaKind === 'sticker' && stickerEmRajada(from, sender, quando.getTime())
+        if (rajada) {
+          log.debug({ channel: from, sender }, 'sticker em rajada ignorado')
+        } else {
+          presence.seen(from, sender, quando, 'escrita')
+        }
 
         const displayName = await contacts.getName(sender)
         const logContent = text || (hasMedia ? '(média)' : '')
@@ -668,11 +824,13 @@ async function start() {
           }
         } else {
           // contabiliza apenas mensagens normais (não comandos)
-          await stats.track(from, sender, hasMedia ? ACTIVITY_TYPES.MEDIA_MESSAGE : ACTIVITY_TYPES.TEXT_MESSAGE, msg.key.id, msg.messageTimestamp)
+          if (!rajada) {
+            await stats.track(from, sender, hasMedia ? ACTIVITY_TYPES.MEDIA_MESSAGE : ACTIVITY_TYPES.TEXT_MESSAGE, msg.key.id, msg.messageTimestamp, mediaKind)
+          }
         }
       }
     }
-  })
+  })().catch((err) => log.error({ err, eventos: Object.keys(events) }, 'Erro ao processar eventos do WhatsApp')))
 }
 
 // limpa pedidos expirados a cada minuto
@@ -684,6 +842,11 @@ setInterval(async () => {
 setInterval(() => {
   subscribePresence().catch(err => log.debug({ err }, 'erro ao renovar presença'))
 }, PRESENCE_SUBSCRIBE_MS)
+
+// relê os nomes: apanha quem mudou o nome no WhatsApp sem voltar a escrever
+setInterval(() => {
+  syncContacts().catch(err => log.error({ err }, 'erro ao sincronizar nomes'))
+}, CONTACTS_SYNC_MS)
 
 monitor.start()
 
